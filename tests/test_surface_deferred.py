@@ -38,8 +38,8 @@ def make_face_soup(verts, tris, face_normals):
 class TestSurfaceDeferredRP(unittest.TestCase):
 
     @torch.no_grad()
-    def test_cube(self):
-        # renders a cube
+    def test_cylinder(self):
+        # renders a cylinder
         rp = SurfaceDeferredRenderPipeline()
         cam = PerspectiveCamera(h=512, w=512)
         mesh = trimesh.creation.cylinder(0.3, 1.0)

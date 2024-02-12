@@ -31,7 +31,6 @@ setuptools.setup(
         'numpy',
         'calibur',
         'typing_extensions',
-        'git+https://github.com/NVlabs/nvdiffrast'
     ],
     python_requires='~=3.7'
 )
