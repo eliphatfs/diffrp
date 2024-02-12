@@ -8,9 +8,9 @@ import nvdiffrast.torch as dr
 from typing import Optional, List
 from dataclasses import dataclass, fields
 
+from ..shader_ops import *
 from ..camera import Camera
 from . import RasterizeContext
-from ..shader_ops import gpu_f32, transform_point, transform_vector, float4, float3
 from ..composite import alpha_blend, additive
 
 
@@ -49,12 +49,12 @@ class SurfaceOutputStandard:
         albedo = self.albedo
         return torch.cat([
             albedo,
-            torch.zeros_like(albedo.xyz) if self.normal is None else self.normal,
-            torch.zeros_like(albedo.xyz) if self.emission is None else self.emission,
-            torch.zeros_like(albedo.x) if self.metallic is None else self.metallic,
-            torch.full_like(albedo.x, 0.5) if self.smoothness is None else self.smoothness,
-            torch.ones_like(albedo.x) if self.occlusion is None else self.occlusion,
-            torch.ones_like(albedo.x) if self.alpha is None else self.alpha
+            zeros_like_vec(albedo, 3) if self.normal is None else self.normal,
+            zeros_like_vec(albedo, 3) if self.emission is None else self.emission,
+            zeros_like_vec(albedo, 1) if self.metallic is None else self.metallic,
+            full_like_vec(albedo, 0.5, 1) if self.smoothness is None else self.smoothness,
+            ones_like_vec(albedo, 1) if self.occlusion is None else self.occlusion,
+            ones_like_vec(albedo, 1) if self.alpha is None else self.alpha
         ], dim=-1)
 
     @staticmethod
@@ -101,7 +101,7 @@ class RenderData:
     normals: torch.Tensor
 
     # transform
-    M: torch.Tensor
+    M: Optional[torch.Tensor] = None
     
     # attributes
     color: Optional[torch.Tensor] = None
@@ -110,9 +110,9 @@ class RenderData:
 
     def normalize(self):
         if self.color is None:
-            self.color = torch.ones_like(self.verts.xxxx)
+            self.color = ones_like_vec(self.verts, 4)
         if self.uv is None:
-            self.uv = torch.zeros_like(self.verts.xy)
+            self.uv = zeros_like_vec(self.verts, 2)
         if self.uv2 is None:
             self.uv2 = torch.zeros_like(self.uv)
         return self
@@ -124,24 +124,27 @@ def cat_draw_call_data(rds: List[RenderData]):
     vs = []
     nors = []
     tris = []
-    sts = [torch.full([1], 0, device='cuda')]
+    sts = [torch.full([1], 0, device='cuda', dtype=torch.int16)]
     offset = 0
     for s, x in enumerate(rds):
-        vs.append(transform_point(x.verts, x.M).xyz)
-        nors.append(transform_vector(x.normals, x.M))
+        if x.M is None:
+            vs.append(x.verts)
+            nors.append(x.normals)
+        else:
+            vs.append(transform_point4x3(x.verts, x.M))
+            nors.append(transform_vector(x.normals, x.M))
         tris.append(x.tris + offset)
-        sts.append(torch.full([len(x.tris)], s + 1, device=x.tris.device))
+        sts.append(x.tris.new_full([len(x.tris)], s + 1, dtype=torch.int16))
         offset += len(x.verts)
     stencil = torch.cat(sts)
     for field in fields(RenderData):
         if field.name not in ('verts', 'tris', 'normals', 'M'):
             kw[field.name] = torch.cat([getattr(x, field.name) for x in rds])
-    I4 = torch.eye(4, device='cuda', dtype=torch.float32)
     return stencil, RenderData(
         verts=torch.cat(vs),
         tris=torch.cat(tris),
         normals=torch.cat(nors),
-        M=I4, **kw
+        M=None, **kw
     )
 
 
@@ -209,12 +212,13 @@ class SurfaceDeferredRenderPipeline:
             stencil, render_data = cat_draw_call_data([x.render_data for x in self.dcs])
             v = render_data.verts
             tris = render_data.tris
-            clip_space = transform_point(v, self.p @ self.v @ render_data.M)
+            assert render_data.M is None
+            clip_space = transform_point(v, self.p @ self.v)
             rng = torch.tensor([[0, len(tris)]], dtype=torch.int32)
             with dr.DepthPeeler(ctx, clip_space, tris, (self.h, self.w), rng) as dp:
                 while True:
                     rast, rast_db = dp.rasterize_next_layer()
-                    if (rast.a <= 0).all():
+                    if (not opaque_only) and (rast.a <= 0).all():
                         break
                     world_pos, _ = dr.interpolate(v, rast, tris, rast_db)
                     world_normal, _ = dr.interpolate(render_data.normals, rast, tris, rast_db)
@@ -229,11 +233,12 @@ class SurfaceDeferredRenderPipeline:
                         color, uv, uv2, uv_da, uv2_da
                     )
 
-                    stencil_b = stencil[rast.a.long()]
+                    stencil_b = stencil[rast.a.int()]
                     layer_gbuf = []
                     for s, dc in enumerate(self.dcs):
                         surf_uni = SurfaceUniform(dc.render_data.M, self.v, self.p)
-                        surf_out = dc.material.shade(surf_uni, surf_in).to_gbuffer_tensor()
+                        surf_out = dc.material.shade(surf_uni, surf_in)
+                        surf_out = surf_out.to_gbuffer_tensor()
                         stencil_match = stencil_b == s + 1
                         layer_gbuf.append(GBuffer(surf_out, stencil_match, (rast, clip_space, tris)))
                     g_buffers.append(stencil_match_g_buffer(layer_gbuf))

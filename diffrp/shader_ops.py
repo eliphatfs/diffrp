@@ -33,13 +33,29 @@ def multi_surf(*surfs):
     return lambda x: tuple(surf(x) for surf in surfs)
 
 
+def zeros_like_vec(x: torch.Tensor, v):
+    return x.new_zeros(*x.shape[:-1], v)
+
+
+def ones_like_vec(x: torch.Tensor, v):
+    return x.new_ones(*x.shape[:-1], v)
+
+
+def full_like_vec(x: torch.Tensor, value, v):
+    return x.new_full([*x.shape[:-1], v], value)
+
+
 def homogeneous(coords: torch.Tensor):
-    return rst.supercat([coords, coords.new_ones(1)], dim=-1)
+    return torch.cat([coords, ones_like_vec(coords, 1)], dim=-1)
 
 
 def transform_point(xyz, matrix):
     h = homogeneous(xyz)
     return torch.matmul(h, matrix.T)
+
+
+def transform_point4x3(xyz, matrix):
+    return torch.addmm(matrix[:-1, -1], xyz, matrix[:-1, :-1].T)
 
 
 def transform_vector(xyz, matrix):
