@@ -45,10 +45,33 @@ class SurfaceOutputStandard:
     occlusion: Optional[torch.Tensor] = None  # F1, default to 1.0
     alpha: Optional[torch.Tensor] = None  # F1, default to 1.0
 
+    def to_gbuffer_tensor(self):
+        albedo = self.albedo
+        return torch.cat([
+            albedo,
+            torch.zeros_like(albedo.xyz) if self.normal is None else self.normal,
+            torch.zeros_like(albedo.xyz) if self.emission is None else self.emission,
+            torch.zeros_like(albedo.x) if self.metallic is None else self.metallic,
+            torch.full_like(albedo.x, 0.5) if self.smoothness is None else self.smoothness,
+            torch.ones_like(albedo.x) if self.occlusion is None else self.occlusion,
+            torch.ones_like(albedo.x) if self.alpha is None else self.alpha
+        ], dim=-1)
+
+    @staticmethod
+    def from_gbuffer_tensor(surf_out_tensor: torch.Tensor):
+        return SurfaceOutputStandard(
+            surf_out_tensor[..., :3],
+            surf_out_tensor[..., 3:6],
+            surf_out_tensor[..., 6:9],
+            surf_out_tensor[..., 9:10],
+            surf_out_tensor[..., 10:11],
+            surf_out_tensor[..., 11:12],
+            surf_out_tensor[..., 12:13]
+        )
 
 @dataclass
 class GBuffer:
-    surf_out: SurfaceOutputStandard
+    surf_out_tensor: torch.Tensor
     stencil_match: torch.BoolTensor
     rast_inputs: tuple
 
@@ -132,25 +155,9 @@ class DrawCall:
 def stencil_match_g_buffer(g_buffers: List[GBuffer]):
     assert len(g_buffers) > 0
     allow_inplace = not torch.is_grad_enabled()
-    ref_albedo = g_buffers[0].surf_out.albedo
-    ref_stencil = g_buffers[0].stencil_match
-    ref_rast = g_buffers[0].rast_inputs
-    g = GBuffer(SurfaceOutputStandard(
-        ref_albedo,
-        torch.zeros_like(ref_albedo.xyz),
-        torch.zeros_like(ref_albedo.xyz),
-        torch.zeros_like(ref_albedo.x),
-        torch.full_like(ref_albedo.x, 0.5),
-        torch.ones_like(ref_albedo.x),
-        torch.ones_like(ref_albedo.x)
-    ), torch.zeros_like(ref_stencil), ref_rast)
-    for n in g_buffers:
-        for field in fields(SurfaceOutputStandard):
-            cur = getattr(n.surf_out, field.name)
-            if cur is None:
-                continue
-            pre = getattr(g.surf_out, field.name)
-            setattr(g.surf_out, field.name, torch.where(n.stencil_match, cur, pre))
+    g = g_buffers[0]
+    for n in g_buffers[1:]:
+        g.surf_out_tensor = torch.where(n.stencil_match, n.surf_out_tensor, g.surf_out_tensor)
         if allow_inplace:
             g.stencil_match |= n.stencil_match
         else:
@@ -173,15 +180,16 @@ class SurfaceDeferredRenderPipeline:
         return self
 
     def shade_g_buffer(self, g_buffer: GBuffer, mode: SurfaceShading):
+        surf_out = SurfaceOutputStandard.from_gbuffer_tensor(g_buffer.surf_out_tensor)
         if mode == SurfaceShading.Unlit:
-            return g_buffer.surf_out.albedo
+            return surf_out.albedo
         if mode == SurfaceShading.Emission:
-            return g_buffer.surf_out.emission
+            return surf_out.emission
         if mode == SurfaceShading.FalseColorMask:
             return float3(
-                g_buffer.surf_out.metallic,
-                g_buffer.surf_out.smoothness,
-                g_buffer.surf_out.occlusion
+                surf_out.metallic,
+                surf_out.smoothness,
+                surf_out.occlusion
             )
         raise NotImplementedError("GBuffer Shader not implemented yet for the given shading mode", mode) 
 
@@ -225,7 +233,7 @@ class SurfaceDeferredRenderPipeline:
                     layer_gbuf = []
                     for s, dc in enumerate(self.dcs):
                         surf_uni = SurfaceUniform(dc.render_data.M, self.v, self.p)
-                        surf_out = dc.material.shade(surf_uni, surf_in)
+                        surf_out = dc.material.shade(surf_uni, surf_in).to_gbuffer_tensor()
                         stencil_match = stencil_b == s + 1
                         layer_gbuf.append(GBuffer(surf_out, stencil_match, (rast, clip_space, tris)))
                     g_buffers.append(stencil_match_g_buffer(layer_gbuf))
@@ -234,7 +242,7 @@ class SurfaceDeferredRenderPipeline:
                         break
         for g in reversed(g_buffers):
             rgb = self.shade_g_buffer(g, shading)
-            alpha = g.surf_out.alpha
+            alpha = SurfaceOutputStandard.from_gbuffer_tensor(g.surf_out_tensor).alpha
             rgba = float4(rgb, alpha)
             # if antialias:
             #     rgba = dr.antialias(rgba, *g.rast_inputs)
