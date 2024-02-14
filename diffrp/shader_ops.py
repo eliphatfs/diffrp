@@ -197,6 +197,7 @@ def hsv2rgb_internal(hsv: torch.Tensor) -> torch.Tensor:
 white_tex = gpu_f32(numpy.ones([16, 16, 4], dtype=numpy.float32))
 black_tex = gpu_f32(numpy.zeros([16, 16, 4], dtype=numpy.float32))
 gray_tex = gpu_f32(numpy.full([16, 16, 4], 0.5, dtype=numpy.float32))
+empty_normal_tex = gpu_f32(numpy.full([16, 16, 3], [0.5, 0.5, 1.0], dtype=numpy.float32))
 
 
 def make_attr(attr: str, idx: str):

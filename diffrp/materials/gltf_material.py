@@ -61,6 +61,6 @@ class GLTFMaterial(SurfaceMaterial):
             self.emissive_factor * self.emissive_texture.sample(si.uv),
             self.metallic_factor * mr.b,
             1.0 - self.roughness_factor * mr.g,
-            self.occlusion_texture.sample(si.uv),
+            self.occlusion_texture.sample(si.uv).r,
             alpha
         )
