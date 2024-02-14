@@ -45,7 +45,7 @@ class SurfaceOutputStandard:
     occlusion: Optional[torch.Tensor] = None  # F1, default to 1.0
     alpha: Optional[torch.Tensor] = None  # F1, default to 1.0
 
-    def to_gbuffer_tensor(self):
+    def to_gbuffer_tensor(self, tangents=None):
         albedo = self.albedo
         return torch.cat([
             albedo,
@@ -54,24 +54,31 @@ class SurfaceOutputStandard:
             zeros_like_vec(albedo, 1) if self.metallic is None else self.metallic,
             full_like_vec(albedo, 0.5, 1) if self.smoothness is None else self.smoothness,
             ones_like_vec(albedo, 1) if self.occlusion is None else self.occlusion,
-            ones_like_vec(albedo, 1) if self.alpha is None else self.alpha
+            ones_like_vec(albedo, 1) if self.alpha is None else self.alpha,
+            zeros_like_vec(albedo, 4) if tangents is None else tangents
         ], dim=-1)
 
+
+@dataclass
+class GTensorView(SurfaceOutputStandard):
+    tangents: Optional[torch.Tensor] = None
+
     @staticmethod
-    def from_gbuffer_tensor(surf_out_tensor: torch.Tensor):
-        return SurfaceOutputStandard(
-            surf_out_tensor[..., :3],
-            surf_out_tensor[..., 3:6],
-            surf_out_tensor[..., 6:9],
-            surf_out_tensor[..., 9:10],
-            surf_out_tensor[..., 10:11],
-            surf_out_tensor[..., 11:12],
-            surf_out_tensor[..., 12:13]
+    def from_gbuffer_tensor(g_tensor: torch.Tensor):
+        return GTensorView(
+            g_tensor[..., 0:3],
+            g_tensor[..., 3:6],
+            g_tensor[..., 6:9],
+            g_tensor[..., 9:10],
+            g_tensor[..., 10:11],
+            g_tensor[..., 11:12],
+            g_tensor[..., 12:13],
+            g_tensor[..., 13:17]
         )
 
 @dataclass
 class GBuffer:
-    surf_out_tensor: torch.Tensor
+    g_tensor: torch.Tensor
     stencil_match: torch.BoolTensor
     rast_inputs: tuple
 
@@ -107,6 +114,7 @@ class RenderData:
     color: Optional[torch.Tensor] = None
     uv: Optional[torch.Tensor] = None
     uv2: Optional[torch.Tensor] = None
+    tangents: Optional[torch.Tensor] = None
 
     def normalize(self):
         if self.color is None:
@@ -115,6 +123,8 @@ class RenderData:
             self.uv = zeros_like_vec(self.verts, 2)
         if self.uv2 is None:
             self.uv2 = torch.zeros_like(self.uv)
+        if self.tangents is None:
+            self.tangents = torch.zeros_like(self.color)
         return self
 
 
@@ -123,6 +133,7 @@ def cat_draw_call_data(rds: List[RenderData]):
     kw = dict()
     vs = []
     nors = []
+    tans = []
     tris = []
     sts = [torch.full([1], 0, device='cuda', dtype=torch.int16)]
     offset = 0
@@ -130,21 +141,25 @@ def cat_draw_call_data(rds: List[RenderData]):
         if x.M is None:
             vs.append(x.verts)
             nors.append(x.normals)
+            tans.append(x.tangents)
         else:
             vs.append(transform_point4x3(x.verts, x.M))
             nors.append(transform_vector(x.normals, x.M))
+            tans.append(float4(transform_vector(x.tangents[..., :3], x.M), x.tangents[..., 3:]))
         tris.append(x.tris + offset)
         sts.append(x.tris.new_full([len(x.tris)], s + 1, dtype=torch.int16))
         offset += len(x.verts)
     stencil = torch.cat(sts)
     for field in fields(RenderData):
-        if field.name not in ('verts', 'tris', 'normals', 'M'):
+        if field.name not in ('verts', 'tris', 'normals', 'M', 'tangents'):
             kw[field.name] = torch.cat([getattr(x, field.name) for x in rds])
     return stencil, RenderData(
         verts=torch.cat(vs),
         tris=torch.cat(tris),
         normals=torch.cat(nors),
-        M=None, **kw
+        M=None,
+        tangents=torch.cat(tans),
+        **kw
     )
 
 
@@ -160,7 +175,7 @@ def stencil_match_g_buffer(g_buffers: List[GBuffer]):
     allow_inplace = not torch.is_grad_enabled()
     g = g_buffers[0]
     for n in g_buffers[1:]:
-        g.surf_out_tensor = torch.where(n.stencil_match, n.surf_out_tensor, g.surf_out_tensor)
+        g.g_tensor = torch.where(n.stencil_match, n.g_tensor, g.g_tensor)
         if allow_inplace:
             g.stencil_match |= n.stencil_match
         else:
@@ -183,7 +198,8 @@ class SurfaceDeferredRenderPipeline:
         return self
 
     def shade_g_buffer(self, g_buffer: GBuffer, mode: SurfaceShading):
-        surf_out = SurfaceOutputStandard.from_gbuffer_tensor(g_buffer.surf_out_tensor)
+        surf_in: SurfaceInput = g_buffer.rast_inputs[-1]
+        surf_out = GTensorView.from_gbuffer_tensor(g_buffer.g_tensor)
         if mode == SurfaceShading.Unlit:
             return surf_out.albedo
         if mode == SurfaceShading.Emission:
@@ -194,6 +210,12 @@ class SurfaceDeferredRenderPipeline:
                 surf_out.smoothness,
                 surf_out.occlusion
             )
+        if mode == SurfaceShading.FalseColorNormal:
+            vnt = surf_out.normal
+            vn = surf_in.world_normal
+            vt = surf_out.tangents[..., :3]
+            vb = surf_out.tangents[..., 3:] * torch.cross(vn, vt)
+            return normalized(transform_vector(vnt.x * vt + vnt.y * vb + vnt.z * vn, self.v)) * 0.5 + 0.5
         raise NotImplementedError("GBuffer Shader not implemented yet for the given shading mode", mode) 
 
     def record(self, dc: DrawCall):
@@ -218,7 +240,7 @@ class SurfaceDeferredRenderPipeline:
             with dr.DepthPeeler(ctx, clip_space, tris, (self.h, self.w), rng) as dp:
                 while True:
                     rast, rast_db = dp.rasterize_next_layer()
-                    if (not opaque_only) and (rast.a <= 0).all():
+                    if (not opaque_only) and (rast[..., -1] <= 0).all():
                         break
                     world_pos, _ = dr.interpolate(v, rast, tris, rast_db)
                     world_normal, _ = dr.interpolate(render_data.normals, rast, tris, rast_db)
@@ -227,6 +249,7 @@ class SurfaceDeferredRenderPipeline:
                     color, _ = dr.interpolate(render_data.color, rast, tris, rast_db)
                     uv, uv_da = dr.interpolate(render_data.uv, rast, tris, rast_db, 'all')
                     uv2, uv2_da = dr.interpolate(render_data.uv2, rast, tris, rast_db, 'all')
+                    tangents, _ = dr.interpolate(render_data.tangents, rast, tris, rast_db)
 
                     surf_in = SurfaceInput(
                         view_dir, world_pos, world_normal,
@@ -238,16 +261,16 @@ class SurfaceDeferredRenderPipeline:
                     for s, dc in enumerate(self.dcs):
                         surf_uni = SurfaceUniform(dc.render_data.M, self.v, self.p)
                         surf_out = dc.material.shade(surf_uni, surf_in)
-                        surf_out = surf_out.to_gbuffer_tensor()
+                        g = surf_out.to_gbuffer_tensor(tangents)
                         stencil_match = stencil_b == s + 1
-                        layer_gbuf.append(GBuffer(surf_out, stencil_match, (rast, clip_space, tris)))
+                        layer_gbuf.append(GBuffer(g, stencil_match, (rast, clip_space, tris, surf_in)))
                     g_buffers.append(stencil_match_g_buffer(layer_gbuf))
                     # opaque needs one layer
                     if opaque_only:
                         break
         for g in reversed(g_buffers):
             rgb = self.shade_g_buffer(g, shading)
-            alpha = SurfaceOutputStandard.from_gbuffer_tensor(g.surf_out_tensor).alpha if not opaque_only else 1.0
+            alpha = GTensorView.from_gbuffer_tensor(g.g_tensor).alpha if not opaque_only else 1.0
             rgba = float4(rgb, alpha)
             # if antialias:
             #     rgba = dr.antialias(rgba, *g.rast_inputs)

@@ -1,14 +1,15 @@
 import numpy
 import torch
+import logging
 import trimesh
 from trimesh.visual import ColorVisuals, TextureVisuals
 from trimesh.visual.material import PBRMaterial
 from dataclasses import dataclass
-from typing import List
-import logging
+from typing import List, Optional
 
 from .. import colors
 from ..shader_ops import *
+from ..plugins import mikktspace
 from ..materials.gltf_material import GLTFMaterial, GLTFSampler
 
 
@@ -20,6 +21,8 @@ class GLTFMeshPrimitive:
     normals: torch.Tensor
     uv: torch.Tensor
     color: torch.Tensor
+    transform: torch.Tensor
+    tangents: Optional[torch.Tensor] = None
 
 
 def force_rgba(color: torch.Tensor):
@@ -89,31 +92,46 @@ def to_gltf_material(verts: torch.Tensor, visual):
 class GLTFLoader:
     prims: List[GLTFMeshPrimitive]
 
-    def __init__(self, path) -> None:
+    def __init__(self, path, compute_tangents=False) -> None:
         scene: trimesh.Scene = trimesh.load(path, force='scene', process=False)
-        prims = scene.dump(concatenate=False)
-        meshes: List[trimesh.Trimesh] = [f for f in prims if isinstance(f, trimesh.Trimesh)]
-        discarded = [f for f in prims if not isinstance(f, trimesh.Trimesh)]
-        logging.info("Loaded scene %s with %d submeshes and %d discarded curve/pcd geometry", path, len(meshes), len(discarded))
+        meshes: List[trimesh.Trimesh] = []
+        transforms: List[torch.Tensor] = []
+        discarded = 0
+        for node_name in scene.graph.nodes_geometry:
+            transform, geometry_name = scene.graph[node_name]
+            # get a copy of the geometry
+            current = scene.geometry[geometry_name]
+            if isinstance(current, trimesh.Trimesh):
+                meshes.append(current)
+                transforms.append(gpu_f32(transform))
+        logging.info("Loaded scene %s with %d submeshes and %d discarded curve/pcd geometry", path, len(meshes), discarded)
         self.prims = []
-        for mesh in meshes:
+        for transform, mesh in zip(transforms, meshes):
             verts = gpu_f32(mesh.vertices)
             uv, color, mat = to_gltf_material(verts, mesh.visual)
-            if 'vertex_normals' in mesh._cache:
+            # TODO: load vertex tangents if existing
+            if 'vertex_normals' in mesh._cache and not compute_tangents:
                 self.prims.append(GLTFMeshPrimitive(
                     mat, verts,
                     gpu_i32(mesh.faces),
                     gpu_f32(mesh.vertex_normals),
-                    uv, color
+                    uv, color, transform
                 ))
             else:
+                flat_idx = mesh.faces.reshape(-1)
                 # GLTF 2.0 specifications 3.7.2.1
                 # if normal does not exist in data
                 # client must calculate *flat* normals
-                flat_idx = mesh.faces.reshape(-1)
+                if 'vertex_normals' in mesh._cache:
+                    normals = mesh.vertex_normals[flat_idx]
+                else:
+                    normals = numpy.stack([mesh.face_normals] * 3, axis=1).reshape(-1, 3)
                 self.prims.append(GLTFMeshPrimitive(
                     mat, verts[flat_idx],
                     gpu_i32(numpy.arange(len(flat_idx)).reshape(-1, 3)),
-                    gpu_f32(numpy.stack([mesh.face_normals] * 3, axis=1).reshape(-1, 3)),
-                    uv[flat_idx], color[flat_idx]
+                    gpu_f32(normals),
+                    uv[flat_idx], color[flat_idx], transform
                 ))
+        if compute_tangents:
+            for prim in self.prims:
+                prim.tangents = mikktspace.execute(prim.verts, prim.normals, prim.uv)

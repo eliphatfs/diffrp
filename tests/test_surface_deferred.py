@@ -69,15 +69,17 @@ class TestSurfaceDeferredRP(unittest.TestCase):
 def normalize(gltf: GLTFLoader):
     bmin = gpu_f32([1e30] * 3)
     bmax = gpu_f32([-1e30] * 3)
-    for prim in gltf.prims:
-        bmin = torch.minimum(bmin, prim.verts.min(0)[0])
-        bmax = torch.maximum(bmax, prim.verts.max(0)[0])
+    world_v = [transform_point4x3(prim.verts, prim.transform) for prim in gltf.prims]
+    for verts, prim in zip(world_v, gltf.prims):
+        bmin = torch.minimum(bmin, verts.min(0)[0])
+        bmax = torch.maximum(bmax, verts.max(0)[0])
     center = (bmin + bmax) / 2
-    radius = 1e-7
+    radius = max(length(verts - center).max() for verts in world_v).item()
+    T = trimesh.transformations.translation_matrix(-center.cpu().numpy())
+    S = trimesh.transformations.scale_matrix(1 / radius)
+    M = gpu_f32(S @ T)
     for prim in gltf.prims:
-        radius = max(radius, length(prim.verts - center).max())
-    for prim in gltf.prims:
-        prim.verts = (prim.verts - center) / radius
+        prim.transform = M @ prim.transform
     return gltf
 
 
@@ -91,19 +93,23 @@ class TestGLTF(unittest.TestCase):
         name = os.path.splitext(os.path.basename(fp))[0]
         ctx = self.ctx
         rp = SurfaceDeferredRenderPipeline()
-        cam = PerspectiveCamera.from_orbit(1024, 1024, 3.8, 30, 70, [0, 0, 0])
+        cam = PerspectiveCamera.from_orbit(640, 640, 3.8, 30, 70, [0, 0, 0])
         rp.new_frame(cam, [1.0, 1.0, 1.0, 0.0])
-        gltf = normalize(GLTFLoader(fp))
+        gltf = normalize(GLTFLoader(fp, compute_tangents=True))
         for prim in gltf.prims:
             rp.record(DrawCall(prim.material, RenderData(
                 prim.verts, prim.tris, prim.normals,
-                color=prim.color, uv=prim.uv
+                M=prim.transform,
+                color=prim.color, uv=prim.uv,
+                tangents=prim.tangents
             )))
-        g, frame = rp.execute(ctx, shading=SurfaceShading.Unlit, opaque_only=True)
+        g, frame = rp.execute(ctx, shading=SurfaceShading.Unlit, opaque_only=False)
         frame = float4(linear_to_srgb(frame.rgb), frame.a)
         plotlib.imsave("tmp/test/%s-albedo.png" % name, saturate(frame).cpu().numpy())
         _, frame = rp.execute(ctx, shading=SurfaceShading.FalseColorMask, g_buffers=g, opaque_only=False)
         plotlib.imsave("tmp/test/%s-mask.png" % name, saturate(frame).cpu().numpy())
+        _, frame = rp.execute(ctx, shading=SurfaceShading.FalseColorNormal, g_buffers=g, opaque_only=False)
+        plotlib.imsave("tmp/test/%s-normal.png" % name, saturate(frame).cpu().numpy())
 
     @torch.no_grad()
     def test_gltfs(self):
