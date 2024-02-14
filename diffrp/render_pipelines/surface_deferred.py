@@ -247,7 +247,7 @@ class SurfaceDeferredRenderPipeline:
                         break
         for g in reversed(g_buffers):
             rgb = self.shade_g_buffer(g, shading)
-            alpha = SurfaceOutputStandard.from_gbuffer_tensor(g.surf_out_tensor).alpha
+            alpha = SurfaceOutputStandard.from_gbuffer_tensor(g.surf_out_tensor).alpha if not opaque_only else 1.0
             rgba = float4(rgb, alpha)
             # if antialias:
             #     rgba = dr.antialias(rgba, *g.rast_inputs)
@@ -256,4 +256,4 @@ class SurfaceDeferredRenderPipeline:
             else:
                 blend_fn = alpha_blend
             self.frame_b = torch.where(g.stencil_match, blend_fn(self.frame_b, rgba), self.frame_b)
-        return g_buffers, self.frame_b.squeeze(0)
+        return g_buffers, torch.flipud(self.frame_b.squeeze(0))

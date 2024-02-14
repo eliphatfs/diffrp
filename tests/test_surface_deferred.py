@@ -65,6 +65,22 @@ class TestSurfaceDeferredRP(unittest.TestCase):
         # plotlib.show()
 
 
+@torch.no_grad()
+def normalize(gltf: GLTFLoader):
+    bmin = gpu_f32([1e30] * 3)
+    bmax = gpu_f32([-1e30] * 3)
+    for prim in gltf.prims:
+        bmin = torch.minimum(bmin, prim.verts.min(0)[0])
+        bmax = torch.maximum(bmax, prim.verts.max(0)[0])
+    center = (bmin + bmax) / 2
+    radius = 1e-7
+    for prim in gltf.prims:
+        radius = max(radius, length(prim.verts - center).max())
+    for prim in gltf.prims:
+        prim.verts = (prim.verts - center) / radius
+    return gltf
+
+
 class TestGLTF(unittest.TestCase):
 
     @classmethod
@@ -75,20 +91,19 @@ class TestGLTF(unittest.TestCase):
         name = os.path.splitext(os.path.basename(fp))[0]
         ctx = self.ctx
         rp = SurfaceDeferredRenderPipeline()
-        cam = PerspectiveCamera.from_orbit(512, 512, 8.0, 45, 60, [0, 0, 0])
+        cam = PerspectiveCamera.from_orbit(1024, 1024, 3.8, 30, 70, [0, 0, 0])
         rp.new_frame(cam, [1.0, 1.0, 1.0, 0.0])
-        gltf = GLTFLoader(fp)
+        gltf = normalize(GLTFLoader(fp))
         for prim in gltf.prims:
             rp.record(DrawCall(prim.material, RenderData(
                 prim.verts, prim.tris, prim.normals,
                 color=prim.color, uv=prim.uv
             )))
-        g, frame = rp.execute(ctx, shading=SurfaceShading.Unlit)
-        frame = linear_to_srgb(frame).clamp(0, 1)
-        plotlib.imsave("tmp/test/%s-albedo.png" % name, frame.cpu().numpy())
-        _, frame = rp.execute(ctx, shading=SurfaceShading.FalseColorMask, g_buffers=g)
-        frame = frame.clamp(0, 1)
-        plotlib.imsave("tmp/test/%s-mask.png" % name, frame.cpu().numpy())
+        g, frame = rp.execute(ctx, shading=SurfaceShading.Unlit, opaque_only=True)
+        frame = float4(linear_to_srgb(frame.rgb), frame.a)
+        plotlib.imsave("tmp/test/%s-albedo.png" % name, saturate(frame).cpu().numpy())
+        _, frame = rp.execute(ctx, shading=SurfaceShading.FalseColorMask, g_buffers=g, opaque_only=False)
+        plotlib.imsave("tmp/test/%s-mask.png" % name, saturate(frame).cpu().numpy())
 
     @torch.no_grad()
     def test_gltfs(self):

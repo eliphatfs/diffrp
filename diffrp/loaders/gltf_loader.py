@@ -58,7 +58,7 @@ def to_gltf_material(verts: torch.Tensor, visual):
             default_mat.base_color_factor = force_rgba(gpu_f32(mat.baseColorFactor))
         if mat.baseColorTexture is not None:
             srgb = gpu_f32(numpy.array(mat.baseColorTexture.convert("RGBA"))) / 255.0
-            default_mat.base_color_texture.image = colors.srgb_to_linear(srgb)
+            default_mat.base_color_texture.image = float4(colors.srgb_to_linear(srgb.rgb), srgb.a)
         if mat.metallicFactor is not None:
             default_mat.metallic_factor = float(mat.metallicFactor)
         if mat.roughnessFactor is not None:
