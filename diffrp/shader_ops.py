@@ -83,6 +83,10 @@ def saturate(x: torch.Tensor):
     return torch.clamp(x, 0.0, 1.0)
 
 
+def split_31(x: torch.Tensor):
+    return x[..., :3], x[..., 3:]
+
+
 def normalized(x: torch.Tensor):
     return F.normalize(x, dim=-1)
 

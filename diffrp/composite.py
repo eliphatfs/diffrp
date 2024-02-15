@@ -1,11 +1,13 @@
 import torch
-from .shader_ops import saturate, float4
+from .shader_ops import saturate, float4, split_31
 
 
 def alpha_blend(background: torch.Tensor, foreground: torch.Tensor):
-    alpha = saturate(foreground.a)
-    return background * (1 - alpha) + foreground * alpha
+    rgb, a = split_31(foreground)
+    return background * (1 - a) + float4(rgb * a, a)
 
 
 def additive(background: torch.Tensor, foreground: torch.Tensor):
-    return float4(background.rgb + foreground.rgb, saturate(background.a + foreground.a))
+    brgb, ba = split_31(background)
+    frgb, fa = split_31(foreground)
+    return float4(brgb + frgb, saturate(ba + fa))
