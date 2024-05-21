@@ -32,5 +32,6 @@ setuptools.setup(
         'calibur',
         'typing_extensions',
     ],
+    package_data={"diffrp.plugins.": ["**/*.c", "**/*.h"]},
     python_requires='~=3.7'
 )
