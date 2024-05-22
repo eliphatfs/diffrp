@@ -17,7 +17,7 @@ setuptools.setup(
     version=__version__,
     author="flandre.info",
     author_email="flandre@scarletx.cn",
-    description="Toolbox for converting rotations, camera calibration matrices, transforms and spaces.",
+    description="Differentiable Render Pipelines with PyTorch.",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/eliphatfs/diffrp",
@@ -30,7 +30,10 @@ setuptools.setup(
     install_requires=[
         'numpy',
         'calibur',
+        'trimesh',
+        'torch_redstone',
         'typing_extensions',
+        'nvdiffrast @ https://github.com/eliphatfs/nvdiffrast.git',
     ],
     package_data={"diffrp.plugins": ["**/*.c", "**/*.h"]},
     python_requires='~=3.7'
