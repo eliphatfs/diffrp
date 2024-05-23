@@ -2,6 +2,14 @@ import torch
 from .shader_ops import normalized
 
 
+def make_face_soup(verts, tris, face_normals):
+    return (
+        verts[tris].reshape(-1, 3),
+        torch.arange(len(tris.reshape(-1)), device=tris.device, dtype=torch.int32).reshape(tris.shape),
+        torch.stack([face_normals] * 3, axis=1).reshape(-1, 3)
+    )
+
+
 def compute_face_normals(verts: torch.Tensor, faces: torch.Tensor, normalize=False):
     face_normals = torch.cross(verts[faces[:, 1]] - verts[faces[:, 0]], 
                                verts[faces[:, 2]] - verts[faces[:, 0]], dim=1)

@@ -10,7 +10,7 @@ import matplotlib.pyplot as plotlib
 from diffrp.camera import PerspectiveCamera
 from diffrp.render_pipelines.surface_deferred import *
 from diffrp.shader_ops import *
-from diffrp.geometry import compute_vertex_normals
+from diffrp.geometry import compute_face_normals, make_face_soup
 from diffrp.loaders.gltf_loader import GLTFLoader
 from diffrp.colors import linear_to_srgb
 
@@ -32,14 +32,6 @@ class CameraSpaceVertexNormalMaterial(SurfaceMaterial):
         )
 
 
-def make_face_soup(verts, tris, face_normals):
-    return (
-        verts[tris].reshape(-1, 3),
-        numpy.arange(len(tris.reshape(-1))).reshape(tris.shape),
-        numpy.stack([face_normals] * 3, axis=1).reshape(-1, 3)
-    )
-
-
 class TestSurfaceDeferredRP(unittest.TestCase):
 
     @torch.no_grad()
@@ -57,9 +49,9 @@ class TestSurfaceDeferredRP(unittest.TestCase):
             rp.new_frame(cam, [0.8, 0.8, 1.0, 0.1])
             rp.record(DrawCall(
                 CameraSpaceVertexNormalMaterial(),
-                RenderData(gpu_f32(v), gpu_i32(f), compute_vertex_normals(gpu_f32(v), gpu_i32(f)), M)
+                RenderData(*make_face_soup(gpu_f32(v), gpu_i32(f), compute_face_normals(gpu_f32(v), gpu_i32(f))), M)
             ))
-            fb = rp.execute(ctx, opaque_only=False)[1]
+            fb = rp.execute(ctx, opaque_only=False, shading=SurfaceShading.FalseColorNormal)[1]
         fb = fb.cpu().numpy()
         plotlib.imsave("tmp/test/cylinder-transparent.png", fb)
         # print(500 / (time.perf_counter() - t))
