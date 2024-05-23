@@ -10,6 +10,7 @@ import matplotlib.pyplot as plotlib
 from diffrp.camera import PerspectiveCamera
 from diffrp.render_pipelines.surface_deferred import *
 from diffrp.shader_ops import *
+from diffrp.geometry import compute_vertex_normals
 from diffrp.loaders.gltf_loader import GLTFLoader
 from diffrp.colors import linear_to_srgb
 
@@ -47,7 +48,8 @@ class TestSurfaceDeferredRP(unittest.TestCase):
         rp = SurfaceDeferredRenderPipeline()
         cam = PerspectiveCamera(h=512, w=512)
         mesh = trimesh.creation.cylinder(0.3, 1.0)
-        v, f, vn = make_face_soup(mesh.vertices, mesh.faces, mesh.face_normals)
+        v, f = mesh.vertices, mesh.faces
+        # v, f, vn = make_face_soup(mesh.vertices, mesh.faces, mesh.face_normals)
         ctx = dr.RasterizeCudaContext()
         # t = time.perf_counter()
         for _ in range(5):
@@ -55,7 +57,7 @@ class TestSurfaceDeferredRP(unittest.TestCase):
             rp.new_frame(cam, [0.8, 0.8, 1.0, 0.1])
             rp.record(DrawCall(
                 CameraSpaceVertexNormalMaterial(),
-                RenderData(gpu_f32(v), gpu_i32(f), gpu_f32(vn), M)
+                RenderData(gpu_f32(v), gpu_i32(f), compute_vertex_normals(gpu_f32(v), gpu_i32(f)), M)
             ))
             fb = rp.execute(ctx, opaque_only=False)[1]
         fb = fb.cpu().numpy()
