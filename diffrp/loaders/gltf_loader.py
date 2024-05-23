@@ -37,13 +37,13 @@ def to_gltf_material(verts: torch.Tensor, visual):
     # GLTF 2.0 specifications 3.9.6 and 5.19
     default_mat = GLTFMaterial(
         gpu_f32([1, 1, 1, 1]),
-        GLTFSampler(white_tex),
+        GLTFSampler(white_tex()),
         1.0, 1.0,
-        GLTFSampler(white_tex),
-        GLTFSampler(empty_normal_tex),
-        GLTFSampler(white_tex),
+        GLTFSampler(white_tex()),
+        GLTFSampler(empty_normal_tex()),
+        GLTFSampler(white_tex()),
         gpu_f32([0, 0, 0]),
-        GLTFSampler(black_tex.rgb),
+        GLTFSampler(black_tex().rgb),
         0.5, 'OPAQUE'
     )
     color = ones_like_vec(verts, 4)

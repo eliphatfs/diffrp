@@ -1,6 +1,7 @@
 import numpy
 import torch
 import operator
+import functools
 import itertools
 import torch_redstone as rst
 import torch.nn.functional as F
@@ -9,13 +10,13 @@ import torch.nn.functional as F
 def gpu_f32(inputs):
     if isinstance(inputs, torch.Tensor):
         return inputs.to(dtype=torch.float32, device='cuda').contiguous()
-    return torch.tensor(inputs, dtype=torch.float32, device=torch.device('cuda:0')).contiguous()
+    return torch.tensor(inputs, dtype=torch.float32, device='cuda').contiguous()
 
 
 def gpu_i32(inputs):
     if isinstance(inputs, torch.Tensor):
         return inputs.to(dtype=torch.int32, device='cuda').contiguous()
-    return torch.tensor(inputs, dtype=torch.int32, device=torch.device('cuda:0')).contiguous()
+    return torch.tensor(inputs, dtype=torch.int32, device='cuda').contiguous()
 
 
 def gpu_color(inputs):
@@ -198,10 +199,24 @@ def hsv2rgb_internal(hsv: torch.Tensor) -> torch.Tensor:
     return rgb
 
 
-white_tex = gpu_f32(numpy.ones([16, 16, 4], dtype=numpy.float32))
-black_tex = gpu_f32(numpy.zeros([16, 16, 4], dtype=numpy.float32))
-gray_tex = gpu_f32(numpy.full([16, 16, 4], 0.5, dtype=numpy.float32))
-empty_normal_tex = gpu_f32(numpy.full([16, 16, 3], [0.5, 0.5, 1.0], dtype=numpy.float32))
+@functools.lru_cache(maxsize=None)
+def white_tex():
+    return gpu_f32(numpy.ones([16, 16, 4], dtype=numpy.float32))
+
+
+@functools.lru_cache(maxsize=None)
+def black_tex():
+    return gpu_f32(numpy.zeros([16, 16, 4], dtype=numpy.float32))
+
+
+@functools.lru_cache(maxsize=None)
+def gray_tex():
+    return gpu_f32(numpy.full([16, 16, 4], 0.5, dtype=numpy.float32))
+
+
+@functools.lru_cache(maxsize=None)
+def empty_normal_tex():
+    return gpu_f32(numpy.full([16, 16, 3], [0.5, 0.5, 1.0], dtype=numpy.float32))
 
 
 def make_attr(attr: str, idx: str):
