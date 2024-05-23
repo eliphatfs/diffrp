@@ -49,7 +49,7 @@ class SurfaceOutputStandard:
         albedo = self.albedo
         return torch.cat([
             albedo,
-            zeros_like_vec(albedo, 3) if self.normal is None else self.normal,
+            zeros_like_vec(albedo, 3) + albedo.new_tensor([0, 0, 1]) if self.normal is None else self.normal,
             zeros_like_vec(albedo, 3) if self.emission is None else self.emission,
             zeros_like_vec(albedo, 1) if self.metallic is None else self.metallic,
             full_like_vec(albedo, 0.5, 1) if self.smoothness is None else self.smoothness,
