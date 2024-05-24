@@ -214,7 +214,7 @@ class SurfaceDeferredRenderPipeline:
             vnt = surf_out.normal
             vn = surf_in.world_normal
             vt, vs = split_31(surf_out.tangents)
-            vb = vs * torch.cross(vn, vt)
+            vb = vs * torch.cross(vn, vt, dim=-1)
             return normalized(transform_vector(vnt.x * vt + vnt.y * vb + vnt.z * vn, self.v)) * 0.5 + 0.5
         raise NotImplementedError("GBuffer Shader not implemented yet for the given shading mode", mode) 
 
