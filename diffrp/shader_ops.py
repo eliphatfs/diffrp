@@ -219,9 +219,17 @@ def empty_normal_tex():
     return gpu_f32(numpy.full([16, 16, 3], [0.5, 0.5, 1.0], dtype=numpy.float32))
 
 
-def make_attr(attr: str, idx: str):
+def _make_attr(attr: str, idx: str):
     catlist = [idx.index(c) for c in attr]
-    setattr(torch.Tensor, attr, property(operator.itemgetter((..., catlist))))
+    for s in range(1, 4):
+        if all(x - y == s for x, y in zip(catlist[1:], catlist)):
+            # fast, shape operation
+            indexer = slice(catlist[0], catlist[-1] + 1, s)
+            break
+    else:
+        # general but slow, has cpu-gpu synchronization and allocation
+        indexer = catlist
+    setattr(torch.Tensor, attr, property(operator.itemgetter((..., indexer))))
 
 
 indices = ['xyzw', 'rgba']
@@ -229,4 +237,4 @@ for idx in indices:
     comb = [''.join(x) for x in itertools.product([''] + list(idx), repeat=len(idx))]
     comb = [x for x in comb if x]
     for attr in comb:
-        make_attr(attr, idx)
+        _make_attr(attr, idx)
