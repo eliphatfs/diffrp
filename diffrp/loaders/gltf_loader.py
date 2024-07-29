@@ -7,8 +7,8 @@ from trimesh.visual.material import PBRMaterial
 from dataclasses import dataclass
 from typing import List, Optional
 
-from .. import colors
-from ..shader_ops import *
+from ..utils import colors
+from ..utils.shader_ops import *
 from ..plugins import mikktspace
 from ..materials.gltf_material import GLTFMaterial, GLTFSampler
 

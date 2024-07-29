@@ -7,12 +7,12 @@ import unittest
 import trimesh.creation
 import nvdiffrast.torch as dr
 import matplotlib.pyplot as plotlib
-from diffrp.camera import PerspectiveCamera
-from diffrp.render_pipelines.surface_deferred import *
-from diffrp.shader_ops import *
-from diffrp.geometry import compute_face_normals, make_face_soup
+from diffrp.scene.camera import PerspectiveCamera
+from diffrp.rendering.surface_deferred import *
+from diffrp.utils.shader_ops import *
+from diffrp.utils.geometry import compute_face_normals, make_face_soup
 from diffrp.loaders.gltf_loader import GLTFLoader
-from diffrp.colors import linear_to_srgb
+from diffrp.utils.colors import linear_to_srgb
 
 
 class ObjectSpaceVertexNormalMaterial(SurfaceMaterial):

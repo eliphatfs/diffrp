@@ -8,10 +8,10 @@ import nvdiffrast.torch as dr
 from typing import Optional, List
 from dataclasses import dataclass, fields
 
-from ..shader_ops import *
-from ..camera import Camera
+from ..utils.shader_ops import *
+from ..scene.camera import Camera
 from . import RasterizeContext
-from ..composite import alpha_blend, additive
+from ..utils.composite import alpha_blend, additive
 
 
 @dataclass
@@ -227,7 +227,7 @@ class SurfaceDeferredRenderPipeline:
         ctx: RasterizeContext,
         opaque_only=True,
         shading: SurfaceShading = SurfaceShading.Unlit,
-        g_buffers: List[GBuffer] = None
+        g_buffers: Optional[List[GBuffer]] = None
     ):
         if g_buffers is None:
             g_buffers = []
