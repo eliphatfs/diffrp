@@ -3,6 +3,7 @@ import torch
 from dataclasses import dataclass
 from typing import Dict, Optional
 from collections.abc import Mapping
+from typing_extensions import Literal
 from ..utils.shader_ops import normalized
 from ..utils.cache import cached, key_cached
 from ..rendering.interpolator import Interpolator
@@ -107,13 +108,14 @@ class CustomSurfaceInputs(Mapping):
 @dataclass
 class SurfaceOutputStandard:
     albedo: Optional[torch.Tensor] = None  # F3, base color (diffuse or specular), default to magenta
-    normal: Optional[torch.Tensor] = None  # F3, tangent space normal
+    normal: Optional[torch.Tensor] = None  # F3, normal in specified space
     emission: Optional[torch.Tensor] = None  # F3, default to black
     metallic: Optional[torch.Tensor] = None  # F1, default to 0.0
     smoothness: Optional[torch.Tensor] = None  # F1, default to 0.5
     occlusion: Optional[torch.Tensor] = None  # F1, default to 1.0
     alpha: Optional[torch.Tensor] = None  # F1, default to 1.0
     aovs: Optional[Dict[str, torch.Tensor]] = None  # arbitrary, filled with nan for non-existing areas in render
+    normal_space: Literal['tangent', 'object', 'world'] = 'tangent'
 
 
 class SurfaceMaterial(metaclass=abc.ABCMeta):

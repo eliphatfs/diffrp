@@ -1,6 +1,6 @@
 from .lights import Light
 from .camera import Camera
-from ..materials.base_material import VertexArrayObject
+from .objects import MeshObject
 
 
 class Scene:
@@ -15,5 +15,5 @@ class Scene:
     def add_light(self, light: Light):
         self.lights.append(light)
 
-    def add_object(self, obj):
-        pass
+    def add_mesh_object(self, mesh_obj: MeshObject):
+        self.objects.append(mesh_obj)
