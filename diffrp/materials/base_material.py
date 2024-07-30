@@ -129,7 +129,7 @@ class SurfaceOutputStandard:
     smoothness: Optional[torch.Tensor] = None  # F1, default to 0.5
     occlusion: Optional[torch.Tensor] = None  # F1, default to 1.0
     alpha: Optional[torch.Tensor] = None  # F1, default to 1.0
-    aovs: Optional[Dict[str, torch.Tensor]] = None  # arbitrary, default to nan for non-existing areas in render
+    aovs: Optional[Dict[str, torch.Tensor]] = None  # arbitrary, default to 0.0 for non-existing areas in render
     normal_space: Literal['tangent', 'object', 'world'] = 'tangent'
 
 
