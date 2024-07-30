@@ -15,6 +15,8 @@ class VertexArrayObject:
     verts: torch.Tensor
     tris: torch.IntTensor
     normals: torch.Tensor
+    world_pos: torch.Tensor
+    stencils: torch.ShortTensor
     
     # attributes
     color: torch.Tensor
@@ -28,7 +30,6 @@ class SurfaceUniform:
     M: torch.Tensor
     V: torch.Tensor
     P: torch.Tensor
-    custom_uniforms: Dict[str, torch.Tensor]
 
     @property
     @cached
@@ -73,7 +74,7 @@ class SurfaceInput:
     @cached
     def world_pos(self) -> torch.Tensor:
         # F3, world position
-        return self.interpolate_ex(self.vertex_buffers.verts, 'point')
+        return self.interpolate_ex(self.vertex_buffers.world_pos)
 
     @property
     @cached
