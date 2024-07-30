@@ -50,6 +50,10 @@ def homogeneous(coords: torch.Tensor):
     return torch.cat([coords, ones_like_vec(coords, 1)], dim=-1)
 
 
+def homogeneous_vec(coords: torch.Tensor):
+    return torch.cat([coords, zeros_like_vec(coords, 1)], dim=-1)
+
+
 def transform_point(xyz, matrix):
     h = homogeneous(xyz)
     return torch.matmul(h, matrix.T)
@@ -60,6 +64,11 @@ def transform_point4x3(xyz, matrix):
 
 
 def transform_vector(xyz, matrix):
+    h = homogeneous_vec(xyz)
+    return torch.matmul(h, matrix.T)[..., :3]
+
+
+def transform_vector3x3(xyz, matrix):
     return torch.matmul(xyz, matrix[:-1, :-1].T)
 
 
