@@ -1,16 +1,17 @@
 import functools
-from typing import Hashable
 from types import FunctionType
+from typing import Hashable, TypeVar
 
 
 class ICached:
     _cache: dict
 
 
+FuncType = TypeVar('FuncType')
+
+
 def cached_func(self: ICached, key: Hashable, func: FunctionType):
-    try:
-        self._cache
-    except AttributeError:
+    if not hasattr(self, '_cache'):
         self._cache = {}
     if key not in self._cache:
         self._cache[key] = func()
@@ -18,20 +19,20 @@ def cached_func(self: ICached, key: Hashable, func: FunctionType):
 
 
 @staticmethod
-def cached(func: FunctionType):
+def cached(func: FuncType) -> FuncType:
 
     @functools.wraps(func)
     def wrapped(self: ICached):
-        return self.cached_func(func.__qualname__, lambda: func(self))
+        return cached_func(self, func.__qualname__, lambda: func(self))
 
     return wrapped
 
 
 @staticmethod
-def key_cached(func: FunctionType):
+def key_cached(func: FuncType) -> FuncType:
 
     @functools.wraps(func)
     def wrapped(self: ICached, arg: Hashable):
-        return self.cached_func(arg, lambda: func(self, arg))
+        return cached_func(self, arg, lambda: func(self, arg))
 
     return wrapped
