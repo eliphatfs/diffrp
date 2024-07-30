@@ -4,9 +4,9 @@ from dataclasses import dataclass
 from typing import Dict, Optional
 from collections.abc import Mapping
 from typing_extensions import Literal
-from ..utils.shader_ops import normalized
 from ..utils.cache import cached, key_cached
 from ..rendering.interpolator import Interpolator
+from ..utils.shader_ops import float4, normalized, transform_point4x3, transform_vector3x3
 
 
 @dataclass
@@ -50,39 +50,54 @@ class SurfaceInput:
         self.vertex_buffers = vertex_buffers
         self.custom_surface_inputs = CustomSurfaceInputs(self)
 
-    def compute(self, vertex_buffer: torch.Tensor):
+    def interpolate_ex(
+        self,
+        vertex_buffer: Optional[torch.Tensor],
+        world_transform: Literal['none', 'vector', 'point', 'vector3ex1'] = 'none'
+    ):
+        if world_transform == 'point':
+            vertex_buffer = transform_point4x3(vertex_buffer, self.uniforms.M)
+        elif world_transform == 'vector':
+            vertex_buffer = transform_vector3x3(vertex_buffer, self.uniforms.M)
+        elif world_transform == 'vector3ex1':
+            vertex_buffer = float4(transform_vector3x3(vertex_buffer.xyz, self.uniforms.M), vertex_buffer.w)
         return self.interpolator.interpolate(vertex_buffer)
 
     @property
     @cached
     def view_dir(self) -> torch.Tensor:
         # F3, view direction (normalized)
-        # return self.compute(self.vertex_buffers)
         return normalized(self.world_pos - self.uniforms.camera_position)
 
     @property
     @cached
     def world_pos(self) -> torch.Tensor:
         # F3, world position
-        return self.compute(self.vertex_buffers.verts)
+        return self.interpolate_ex(self.vertex_buffers.verts, 'point')
 
     @property
     @cached
     def world_normal(self) -> torch.Tensor:
         # F3, geometry world normal (normalized)
-        return normalized(self.compute(self.vertex_buffers.normals))
+        return normalized(self.interpolate_ex(self.vertex_buffers.normals, 'vector'))
 
     @property
     @cached
     def color(self) -> torch.Tensor:
         # F4, vertex color, default to ones
-        return self.compute(self.vertex_buffers.color)
+        return self.interpolate_ex(self.vertex_buffers.color)
 
     @property
     @cached
     def uv(self) -> torch.Tensor:
         # F2, uv, default to zeros
-        return self.compute(self.vertex_buffers.uv)
+        return self.interpolate_ex(self.vertex_buffers.uv)
+
+    @property
+    @cached
+    def world_tangent(self) -> torch.Tensor:
+        # F2, uv, default to zeros
+        return self.interpolate_ex(self.vertex_buffers.tangents, 'vector3ex1')
 
     @property
     def custom_attrs(self) -> Mapping[str, torch.Tensor]:
@@ -96,7 +111,7 @@ class CustomSurfaceInputs(Mapping):
 
     @key_cached
     def __getitem__(self, attr: str) -> torch.Tensor:
-        return self.si.compute(self.si.vertex_buffers.custom_attrs[attr])
+        return self.si.interpolate_ex(self.si.vertex_buffers.custom_attrs[attr])
 
     def __len__(self) -> int:
         return len(self.si.vertex_buffers.custom_attrs)
@@ -108,13 +123,13 @@ class CustomSurfaceInputs(Mapping):
 @dataclass
 class SurfaceOutputStandard:
     albedo: Optional[torch.Tensor] = None  # F3, base color (diffuse or specular), default to magenta
-    normal: Optional[torch.Tensor] = None  # F3, normal in specified space
+    normal: Optional[torch.Tensor] = None  # F3, normal in specified space, default to geometry normal
     emission: Optional[torch.Tensor] = None  # F3, default to black
     metallic: Optional[torch.Tensor] = None  # F1, default to 0.0
     smoothness: Optional[torch.Tensor] = None  # F1, default to 0.5
     occlusion: Optional[torch.Tensor] = None  # F1, default to 1.0
     alpha: Optional[torch.Tensor] = None  # F1, default to 1.0
-    aovs: Optional[Dict[str, torch.Tensor]] = None  # arbitrary, filled with nan for non-existing areas in render
+    aovs: Optional[Dict[str, torch.Tensor]] = None  # arbitrary, default to nan for non-existing areas in render
     normal_space: Literal['tangent', 'object', 'world'] = 'tangent'
 
 
