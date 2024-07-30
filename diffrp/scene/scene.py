@@ -1,3 +1,4 @@
+from typing import List
 from .lights import Light
 from .camera import Camera
 from .objects import MeshObject
@@ -5,9 +6,9 @@ from .objects import MeshObject
 
 class Scene:
     def __init__(self) -> None:
-        self.cameras = []
-        self.lights = []
-        self.objects = []
+        self.cameras: List[Camera] = []
+        self.lights: List[Light] = []
+        self.objects: List[MeshObject] = []
 
     def add_camera(self, camera: Camera):
         self.cameras.append(camera)

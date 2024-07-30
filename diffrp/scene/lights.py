@@ -6,6 +6,7 @@ from dataclasses import dataclass
 @dataclass
 class Light(object):
     intensity: Union[torch.Tensor, float]
+    color: torch.Tensor
 
 
 @dataclass
