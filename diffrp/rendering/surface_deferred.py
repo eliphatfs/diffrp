@@ -1,282 +1,273 @@
-"""
-Deferred surface render pipeline.
-"""
-import enum
 import torch
-import trimesh
 import nvdiffrast.torch as dr
-from typing import Optional, List
-from dataclasses import dataclass, fields
-
-from ..utils.shader_ops import *
+from typing import Union, List, Tuple, Callable, Optional
 from .camera import Camera
-from . import RasterizeContext
-from ..utils.composite import alpha_blend, additive
+from ..scene.scene import Scene
+from ..utils.cache import cached
+from .interpolator import Interpolator
+from ..utils.composite import alpha_blend
+from ..materials.base_material import VertexArrayObject, SurfaceInput, SurfaceUniform, SurfaceOutputStandard
+from ..utils.shader_ops import gpu_f32, transform_point, transform_point4x3, ones_like_vec, zeros_like_vec, floatx, float3, float4, normalized, transform_vector3x3, length
 
 
-@dataclass
-class SurfaceUniform:
-    M: torch.Tensor
-    V: torch.Tensor
-    P: torch.Tensor
-
-
-@dataclass
-class SurfaceInput:
-    view_dir: torch.Tensor  # F3, view direction (not normalized)
-    world_pos: torch.Tensor  # F3, world position
-    world_normal: torch.Tensor  # F3, geometry world normal (not normalized)
-
-    color: torch.Tensor  # F4, vertex color, default to ones
-    uv: torch.Tensor  # F2, uv, default to zeros
-    uv2: torch.Tensor  # F2, optional extra set of uv, default to zeros
-
-    uv_da: torch.Tensor  # derivatives for uv, default to zeros
-    uv2_da: torch.Tensor  # derivatives for uv2, default to zeros
-
-
-@dataclass
-class SurfaceOutputStandard:
-    albedo: torch.Tensor  # F3, base color (diffuse or specular)
-    normal: Optional[torch.Tensor] = None  # F3, tangent space normal
-    emission: Optional[torch.Tensor] = None  # F3, default to black
-    metallic: Optional[torch.Tensor] = None  # F1, default to 0.0
-    smoothness: Optional[torch.Tensor] = None  # F1, default to 0.5
-    occlusion: Optional[torch.Tensor] = None  # F1, default to 1.0
-    alpha: Optional[torch.Tensor] = None  # F1, default to 1.0
-
-    def to_gbuffer_tensor(self, tangents=None):
-        albedo = self.albedo
-        return torch.cat([
-            albedo,
-            zeros_like_vec(albedo, 3) + albedo.new_tensor([0, 0, 1]) if self.normal is None else self.normal,
-            zeros_like_vec(albedo, 3) if self.emission is None else self.emission,
-            zeros_like_vec(albedo, 1) if self.metallic is None else self.metallic,
-            full_like_vec(albedo, 0.5, 1) if self.smoothness is None else self.smoothness,
-            ones_like_vec(albedo, 1) if self.occlusion is None else self.occlusion,
-            ones_like_vec(albedo, 1) if self.alpha is None else self.alpha,
-            zeros_like_vec(albedo, 4) if tangents is None else tangents
-        ], dim=-1)
-
-
-@dataclass
-class GTensorView(SurfaceOutputStandard):
-    tangents: Optional[torch.Tensor] = None
-
-    @staticmethod
-    def from_gbuffer_tensor(g_tensor: torch.Tensor):
-        return GTensorView(
-            g_tensor[..., 0:3],
-            g_tensor[..., 3:6],
-            g_tensor[..., 6:9],
-            g_tensor[..., 9:10],
-            g_tensor[..., 10:11],
-            g_tensor[..., 11:12],
-            g_tensor[..., 12:13],
-            g_tensor[..., 13:17]
-        )
-
-@dataclass
-class GBuffer:
-    g_tensor: torch.Tensor
-    stencil_match: torch.BoolTensor
-    rast_inputs: tuple
-
-
-class SurfaceShading(enum.Enum):
-    Unlit = 1  # unlit, or albedo only
-    Emission = 2  # emission only
-    LitCutout = 3  # alpha clipping with threshold 0.5
-    LitFade = 4  # alpha dims everything, alpha blending
-    LitAdditive = 5  # alpha dims everything, additive blending
-    LitPhysical = 6  # alpha dims diffuse but keeps specular
-    FalseColorNormal = 7  # camera space normal
-    FalseColorMask = 8  # R = metal G = smooth B = occlusion
-
-
-class SurfaceMaterial:
-
-    def shade(self, su: SurfaceUniform, si: SurfaceInput) -> SurfaceOutputStandard:
-        raise NotImplementedError
-
-
-@dataclass
-class RenderData:
-    # geometry
-    verts: torch.Tensor
-    tris: torch.IntTensor
-    normals: torch.Tensor
-
-    # transform
-    M: Optional[torch.Tensor] = None
-    
-    # attributes
-    color: Optional[torch.Tensor] = None
-    uv: Optional[torch.Tensor] = None
-    uv2: Optional[torch.Tensor] = None
-    tangents: Optional[torch.Tensor] = None
-
-    def normalize(self):
-        if self.color is None:
-            self.color = ones_like_vec(self.verts, 4)
-        if self.uv is None:
-            self.uv = zeros_like_vec(self.verts, 2)
-        if self.uv2 is None:
-            self.uv2 = torch.zeros_like(self.uv)
-        if self.tangents is None:
-            self.tangents = torch.zeros_like(self.color)
-        return self
-
-
-def cat_draw_call_data(rds: List[RenderData]):
-    rds = [x.normalize() for x in rds]
-    kw = dict()
-    vs = []
-    nors = []
-    tans = []
-    tris = []
-    sts = [torch.full([1], 0, device='cuda', dtype=torch.int16)]
-    offset = 0
-    for s, x in enumerate(rds):
-        if x.M is None:
-            vs.append(x.verts)
-            nors.append(x.normals)
-            tans.append(x.tangents)
-        else:
-            vs.append(transform_point4x3(x.verts, x.M))
-            nors.append(transform_vector(x.normals, x.M))
-            tans.append(float4(transform_vector(x.tangents[..., :3], x.M), x.tangents[..., 3:]))
-        tris.append(x.tris + offset)
-        sts.append(x.tris.new_full([len(x.tris)], s + 1, dtype=torch.int16))
-        offset += len(x.verts)
-    stencil = torch.cat(sts)
-    for field in fields(RenderData):
-        if field.name not in ('verts', 'tris', 'normals', 'M', 'tangents'):
-            kw[field.name] = torch.cat([getattr(x, field.name) for x in rds])
-    return stencil, RenderData(
-        verts=torch.cat(vs),
-        tris=torch.cat(tris),
-        normals=torch.cat(nors),
-        M=None,
-        tangents=torch.cat(tans),
-        **kw
-    )
-
-
-@dataclass
-class DrawCall:
-    # material
-    material: SurfaceMaterial
-    render_data: RenderData
-
-
-def stencil_match_g_buffer(g_buffers: List[GBuffer]):
-    assert len(g_buffers) > 0
-    allow_inplace = not torch.is_grad_enabled()
-    g = g_buffers[0]
-    for n in g_buffers[1:]:
-        g.g_tensor = torch.where(n.stencil_match, n.g_tensor, g.g_tensor)
-        if allow_inplace:
-            g.stencil_match |= n.stencil_match
-        else:
-            g.stencil_match = g.stencil_match | n.stencil_match
-    return g
-
-
-class SurfaceDeferredRenderPipeline:
-    def __init__(self) -> None:
-        self.dcs: List[DrawCall] = []
-
-    def new_frame(self, camera: Camera, bg_color: List[float]):
-        self.dcs.clear()
-        self.camera_pos = gpu_f32(trimesh.transformations.translation_from_matrix(camera.t))
-        self.v = gpu_f32(camera.V())
-        self.p = gpu_f32(camera.P())
-        self.h, self.w = camera.resolution()
-        self.frame_b = torch.empty([1, self.h, self.w, 4], device='cuda', dtype=torch.float32)
-        self.frame_b[:] = gpu_f32(bg_color)
-        return self
-
-    def shade_g_buffer(self, g_buffer: GBuffer, mode: SurfaceShading):
-        surf_in: SurfaceInput = g_buffer.rast_inputs[-1]
-        surf_out = GTensorView.from_gbuffer_tensor(g_buffer.g_tensor)
-        if mode == SurfaceShading.Unlit:
-            return surf_out.albedo
-        if mode == SurfaceShading.Emission:
-            return surf_out.emission
-        if mode == SurfaceShading.FalseColorMask:
-            return float3(
-                surf_out.metallic,
-                surf_out.smoothness,
-                surf_out.occlusion
-            )
-        if mode == SurfaceShading.FalseColorNormal:
-            vnt = surf_out.normal
-            vn = surf_in.world_normal
-            vt, vs = split_alpha(surf_out.tangents)
-            vb = vs * torch.cross(vn, vt, dim=-1)
-            return normalized(transform_vector(vnt.x * vt + vnt.y * vb + vnt.z * vn, self.v)) * 0.5 + 0.5
-        raise NotImplementedError("GBuffer Shader not implemented yet for the given shading mode", mode) 
-
-    def record(self, dc: DrawCall):
-        self.dcs.append(dc)
-        return self
-
-    def execute(
+class SurfaceDeferredRenderSession:
+    def __init__(
         self,
-        ctx: RasterizeContext,
-        opaque_only=True,
-        shading: SurfaceShading = SurfaceShading.Unlit,
-        g_buffers: Optional[List[GBuffer]] = None
-    ):
-        if g_buffers is None:
-            g_buffers = []
-            stencil, render_data = cat_draw_call_data([x.render_data for x in self.dcs])
-            v = render_data.verts
-            tris = render_data.tris
-            assert render_data.M is None
-            clip_space = transform_point(v, self.p @ self.v)
-            rng = torch.tensor([[0, len(tris)]], dtype=torch.int32)
-            with dr.DepthPeeler(ctx, clip_space, tris, (self.h, self.w), rng) as dp:
-                while True:
-                    rast, rast_db = dp.rasterize_next_layer()
-                    if (not opaque_only) and (rast[..., -1] <= 0).all():
-                        break
-                    world_pos, _ = dr.interpolate(v, rast, tris, rast_db)
-                    world_normal, _ = dr.interpolate(render_data.normals, rast, tris, rast_db)
-                    view_dir = world_pos - self.camera_pos
+        ctx: Union[dr.RasterizeCudaContext, dr.RasterizeGLContext],
+        scene: Scene,
+        camera: Camera,
+        opaque_only: bool = True,
+        max_layers: int = 0
+    ) -> None:
+        self.ctx = ctx
+        self.scene = scene
+        self.camera = camera
+        self.opaque_only = opaque_only
+        if max_layers <= 0:
+            max_layers = 16383
+        if opaque_only:
+            max_layers = 1
+        self.max_layers = max_layers
 
-                    color, _ = dr.interpolate(render_data.color, rast, tris, rast_db)
-                    uv, uv_da = dr.interpolate(render_data.uv, rast, tris, rast_db, 'all')
-                    uv2, uv2_da = dr.interpolate(render_data.uv2, rast, tris, rast_db, 'all')
-                    tangents, _ = dr.interpolate(render_data.tangents, rast, tris, rast_db)
+    def _checked_cat(self, attrs: List[torch.Tensor], verts_ref: List[torch.Tensor], expected_dim):
+        for v, a in zip(verts_ref, attrs):
+            assert len(v) == len(a), "attribute length not the same as number of vertices"
+            if isinstance(expected_dim, int):
+                assert a.size(-1) == expected_dim, "expected %d dims but got %d for vertex attribute" % (expected_dim, a.size(-1))
+        return torch.cat(attrs)
 
-                    surf_in = SurfaceInput(
-                        view_dir, world_pos, world_normal,
-                        color, uv, uv2, uv_da, uv2_da
-                    )
-
-                    stencil_b = stencil[rast.a.int()]
-                    layer_gbuf = []
-                    for s, dc in enumerate(self.dcs):
-                        surf_uni = SurfaceUniform(dc.render_data.M, self.v, self.p)
-                        surf_out = dc.material.shade(surf_uni, surf_in)
-                        g = surf_out.to_gbuffer_tensor(tangents)
-                        stencil_match = stencil_b == s + 1
-                        layer_gbuf.append(GBuffer(g, stencil_match, (rast, clip_space, tris, surf_in)))
-                    g_buffers.append(stencil_match_g_buffer(layer_gbuf))
-                    # opaque needs one layer
-                    if opaque_only:
-                        break
-        for g in reversed(g_buffers):
-            rgb = self.shade_g_buffer(g, shading)
-            alpha = GTensorView.from_gbuffer_tensor(g.g_tensor).alpha if not opaque_only else 1.0
-            rgba = float4(rgb, alpha)
-            # if antialias:
-            #     rgba = dr.antialias(rgba, *g.rast_inputs)
-            if shading == SurfaceShading.LitAdditive:
-                blend_fn = additive
+    @cached
+    def vertex_array_object(self) -> VertexArrayObject:
+        world_pos = []
+        tris = []
+        sts = [torch.full([1], 0, device='cuda', dtype=torch.int16)]
+        objs = self.scene.objects
+        offset = 0
+        for s, x in enumerate(objs):
+            world_pos.append(transform_point4x3(x.verts, x.M))
+            assert x.tris.size(-1) == 3, "Expected 3 vertices per triangle, got %d" % x.tris.size(-1)
+            tris.append(x.tris + offset)
+            sts.append(x.tris.new_full([len(x.tris)], s + 1, dtype=torch.int16))
+            offset += len(x.verts)
+        total_custom_attrs = set().union(*(obj.custom_attrs.keys() for obj in objs))
+        for k in total_custom_attrs:
+            for obj in objs:
+                if k in obj.custom_attrs:
+                    sz = obj.custom_attrs[k].size(-1)
+                    break
             else:
-                blend_fn = alpha_blend
-            self.frame_b = torch.where(g.stencil_match, blend_fn(self.frame_b, rgba), self.frame_b)
-        return g_buffers, torch.flipud(self.frame_b.squeeze(0))
+                assert False, "Internal assertion failure. You should never reach here."
+            for obj in objs:
+                if k in obj.custom_attrs:
+                    assert len(obj.custom_attrs[k]) == len(obj.verts), "Attribute length not the same as number of vertices: %s" % k
+                    assert obj.custom_attrs[k].size(-1) == sz, "Different dimensions for same custom attribute: %d != %d" % (obj.custom_attrs[k].size(-1), sz)
+                else:
+                    obj.custom_attrs[k] = zeros_like_vec(obj.verts, sz)
+
+        verts_ref = [obj.verts for obj in objs]
+        return VertexArrayObject(
+            self._checked_cat([obj.verts for obj in objs], verts_ref, 3),
+            self._checked_cat([obj.normals for obj in objs], verts_ref, 3),
+            torch.cat(world_pos),
+            torch.cat(tris).int().contiguous(),
+            torch.cat(sts).short().contiguous(),
+            self._checked_cat([obj.color for obj in objs], verts_ref, None),
+            self._checked_cat([obj.uv for obj in objs], verts_ref, 2),
+            self._checked_cat([obj.tangents for obj in objs], verts_ref, 4),
+            {k: torch.cat([obj.custom_attrs[k] for obj in objs]) for k in total_custom_attrs}
+        )
+    
+    @cached
+    def clip_space(self):
+        vao = self.vertex_array_object()
+        camera = self.camera
+        v = camera.V()
+        p = camera.P()
+        return transform_point(vao.world_pos, p @ v).contiguous()
+    
+    @cached
+    def rasterize(self):
+        vao = self.vertex_array_object()
+        clip_space = self.clip_space()
+        h, w = self.camera.resolution()
+        r_layers: List[torch.Tensor] = []
+        with dr.DepthPeeler(self.ctx, clip_space, vao.tris.contiguous(), (h, w)) as dp:
+            for i in range(self.max_layers):
+                rast, rast_db = dp.rasterize_next_layer()
+                if (i < self.max_layers - 1) and (rast.a <= 0).all():
+                    break
+                r_layers.append(rast)
+        return r_layers
+
+    @cached
+    def layer_material(self):
+        m_layers: List[List[Tuple[SurfaceInput, SurfaceOutputStandard]]] = []
+        vao = self.vertex_array_object()
+        r_layers = self.rasterize()
+        cam = self.camera
+        for rast in r_layers:
+            mats = []
+            for x in self.scene.objects:
+                su = SurfaceUniform(x.M, cam.V(), cam.P())
+                si = SurfaceInput(su, vao, Interpolator(rast, vao.tris))
+                so = x.material.shade(su, si)
+                mats.append((si, so))
+            m_layers.append(mats)
+        return m_layers
+
+    def gbuffer_collect(
+        self,
+        operator: Callable[[SurfaceInput, SurfaceOutputStandard], torch.Tensor],
+        default: Union[List[float], torch.Tensor]
+    ):
+        vao = self.vertex_array_object()
+        h, w = self.camera.resolution()
+        gbuffers = []
+        for rast, mats in zip(self.rasterize(), self.layer_material()):
+            buffer = [gpu_f32(default).expand(1, h, w, len(default))]
+            stencil_lookup = [0]
+            for si, so in mats:
+                op = operator(si, so)
+                if op is None:
+                    stencil_lookup.append(0)
+                else:
+                    stencil_lookup.append(len(buffer))
+                    buffer.append(op)
+            stencil_lookup = vao.stencils.new_tensor(stencil_lookup)
+            gbuffers.append(torch.cat(buffer)[stencil_lookup[vao.stencils][rast.a.int()]])
+        return gbuffers
+
+    def compose_layers(
+        self,
+        colors: list, alphas: Optional[list] = None,
+        blend_fn: Optional[Callable] = None,
+        return_alpha: bool = True
+    ):
+        if alphas is None:
+            alphas = self.alpha_layered()
+        if blend_fn is None:
+            blend_fn = alpha_blend
+        frame_buffer = colors[-1]
+        frame_alpha = alphas[-1]
+        for g, a in zip(reversed(colors[:-1]), reversed(alphas[:-1])):
+            frame_buffer, frame_alpha = blend_fn(frame_buffer, frame_alpha, g, a)
+        if return_alpha:
+            return floatx(frame_buffer, frame_alpha)
+        return frame_buffer
+
+    @cached
+    def alpha_layered(self):
+        if self.opaque_only:
+            return self.gbuffer_collect(lambda x, y: ones_like_vec(x.interpolator.vi_data, 1), [0.])
+        else:
+            return self.gbuffer_collect(lambda x, y: y.alpha, [0.])
+
+    @cached
+    def albedo_layered(self):
+        return self.gbuffer_collect(lambda x, y: y.albedo, [1.0, 0.0, 1.0])
+
+    @cached
+    def emission_layered(self):
+        return self.gbuffer_collect(lambda x, y: y.emission, [0.0, 0.0, 0.0])
+
+    @cached
+    def mso_layered(self):
+        return self.gbuffer_collect(lambda x, y: float3(
+            y.metallic,
+            y.smoothness,
+            y.occlusion
+        ), [0.0, 0.5, 1.0])
+
+    def collector_world_normal(self, si: SurfaceInput, so: SurfaceOutputStandard):
+        vn = si.world_normal
+        if so.normal is None:
+            return vn
+        if so.normal_space == 'tangent':
+            vnt = so.normal
+            vt, vs = si.world_tangent.xyz, si.world_tangent.w
+            vb = vs * torch.cross(vn, vt, dim=-1)
+            return normalized(vnt.x * vt + vnt.y * vb + vnt.z * vn)
+        if so.normal_space == 'object':
+            return normalized(transform_vector3x3(so.normal, si.uniforms.M))
+        if so.normal_space == 'world':
+            return normalized(so.normal)
+        assert False, "Unknown normal space: " + so.normal_space
+
+    @cached
+    def world_space_normal_layered(self):
+        return self.gbuffer_collect(self.collector_world_normal, [0.0, 0.0, 0.0])
+
+    @cached
+    def camera_space_normal_layered(self):
+        world_normals = self.world_space_normal_layered()
+        return [
+            float4(normalized(transform_vector3x3(world_normal.xyz, self.camera.V())), world_normal.a)
+            for world_normal in world_normals
+        ]
+
+    @cached
+    def depth_layered(self):
+        return self.gbuffer_collect(lambda x, y: -transform_vector3x3(x.world_pos, self.camera.V()).z, [0.])
+
+    @cached
+    def distance_layered(self):
+        return self.gbuffer_collect(lambda x, y: length(x.world_pos - x.uniforms.camera_position), [0.])
+
+    @cached
+    def world_position_layered(self):
+        return self.gbuffer_collect(lambda x, y: x.world_pos, [0., 0., 0.])
+
+    @cached
+    def local_position_layered(self):
+        return self.gbuffer_collect(lambda x, y: x.local_pos, [0., 0., 0.])
+
+    @cached
+    def albedo(self):
+        return self.compose_layers(self.albedo_layered())
+
+    @cached
+    def emission(self):
+        return self.compose_layers(self.emission_layered())
+
+    @cached
+    def false_color_mask_mso(self):
+        return self.compose_layers(self.mso_layered())
+
+    @cached
+    def world_space_normal(self):
+        return self.compose_layers(self.world_space_normal_layered())
+
+    @cached
+    def camera_space_normal(self):
+        return self.compose_layers(self.camera_space_normal_layered())
+
+    @cached
+    def false_color_world_space_normal(self):
+        n = self.world_space_normal()
+        return float4(n.xyz * 0.5 + 0.5, n.a)
+
+    @cached
+    def false_color_camera_space_normal(self):
+        n = self.camera_space_normal()
+        return float4(n.xyz * 0.5 + 0.5, n.a)
+
+    @cached
+    def local_position(self):
+        return self.compose_layers(self.local_position_layered())
+
+    @cached
+    def world_position(self):
+        return self.compose_layers(self.world_position_layered())
+
+    @cached
+    def false_color_nocs(self):
+        n = self.local_position()
+        return float4(n.xyz * 0.5 + 0.5, n.a)
+
+    @cached
+    def depth(self):
+        return self.compose_layers(self.depth_layered(), return_alpha=False)
+
+    @cached
+    def distance(self):
+        return self.compose_layers(self.distance_layered(), return_alpha=False)
