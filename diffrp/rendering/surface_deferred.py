@@ -178,10 +178,10 @@ class SurfaceDeferredRenderSession:
         ), [0.0, 0.5, 1.0])
 
     def collector_world_normal(self, si: SurfaceInput, so: SurfaceOutputStandard):
-        vn = si.world_normal
         if so.normal is None:
-            return vn
+            return si.world_normal
         if so.normal_space == 'tangent':
+            vn = si.world_normal_unnormalized
             vnt = so.normal
             vt, vs = si.world_tangent.xyz, si.world_tangent.w
             vb = vs * torch.cross(vn, vt, dim=-1)

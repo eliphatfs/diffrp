@@ -58,14 +58,18 @@ class SurfaceInput:
     def interpolate_ex(
         self,
         vertex_buffer: Optional[torch.Tensor],
-        world_transform: Literal['none', 'vector', 'point', 'vector3ex1'] = 'none'
+        world_transform: Literal['none', 'vector', 'vectornor', 'point', 'vector3ex1', 'vector3norex1'] = 'none',
     ):
         if world_transform == 'point':
             vertex_buffer = transform_point4x3(vertex_buffer, self.uniforms.M)
         elif world_transform == 'vector':
             vertex_buffer = transform_vector3x3(vertex_buffer, self.uniforms.M)
+        elif world_transform == 'vectornor':
+            vertex_buffer = normalized(transform_vector3x3(vertex_buffer, self.uniforms.M))
         elif world_transform == 'vector3ex1':
             vertex_buffer = float4(transform_vector3x3(vertex_buffer.xyz, self.uniforms.M), vertex_buffer.w)
+        elif world_transform == 'vector3norex1':
+            vertex_buffer = float4(normalized(transform_vector3x3(vertex_buffer.xyz, self.uniforms.M)), vertex_buffer.w)
         return self.interpolator.interpolate(vertex_buffer)
 
     @property
@@ -88,9 +92,15 @@ class SurfaceInput:
 
     @property
     @cached
+    def world_normal_unnormalized(self) -> torch.Tensor:
+        # F3, geometry world normal, normalized at vertex level
+        return self.interpolate_ex(self.vertex_buffers.normals, 'vectornor')
+
+    @property
+    @cached
     def world_normal(self) -> torch.Tensor:
         # F3, geometry world normal (normalized)
-        return normalized(self.interpolate_ex(self.vertex_buffers.normals, 'vector'))
+        return normalized(self.world_normal_unnormalized)
 
     @property
     @cached
@@ -107,8 +117,8 @@ class SurfaceInput:
     @property
     @cached
     def world_tangent(self) -> torch.Tensor:
-        # F2, uv, default to zeros
-        return self.interpolate_ex(self.vertex_buffers.tangents, 'vector3ex1')
+        # F4, tangents, default to zeros
+        return self.interpolate_ex(self.vertex_buffers.tangents, 'vector3norex1')
 
     @property
     def custom_attrs(self) -> Mapping[str, torch.Tensor]:
