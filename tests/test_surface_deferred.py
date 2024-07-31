@@ -12,7 +12,6 @@ from diffrp.materials.base_material import SurfaceInput, SurfaceMaterial, Surfac
 from diffrp.rendering.surface_deferred import SurfaceDeferredRenderSession
 from diffrp.scene import Scene, MeshObject
 from diffrp.utils.shader_ops import *
-from diffrp.utils.geometry import compute_face_normals, make_face_soup
 from diffrp.loaders.gltf_loader import load_gltf_scene
 from diffrp.utils.colors import linear_to_srgb
 
