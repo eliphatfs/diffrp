@@ -1,8 +1,8 @@
 import torch
 from dataclasses import dataclass
 from typing_extensions import Literal
-from ..render_pipelines.surface_deferred import SurfaceInput, SurfaceMaterial, SurfaceOutputStandard, SurfaceUniform
-from ..shader_ops import sample2d, ones_like_vec
+from .base_material import SurfaceInput, SurfaceMaterial, SurfaceOutputStandard, SurfaceUniform
+from ..utils.shader_ops import sample2d, ones_like_vec
 
 
 @dataclass
@@ -57,7 +57,7 @@ class GLTFMaterial(SurfaceMaterial):
 
         return SurfaceOutputStandard(
             rgba.rgb,
-            self.normal_texture.sample(si.uv) * 2 + 1,
+            self.normal_texture.sample(si.uv) * 2 - 1,
             self.emissive_factor * self.emissive_texture.sample(si.uv),
             self.metallic_factor * mr.b,
             1.0 - self.roughness_factor * mr.g,

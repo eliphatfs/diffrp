@@ -3,6 +3,7 @@ import numpy
 import trimesh
 import calibur
 from typing import Union, List
+from ..utils.shader_ops import gpu_f32
 
 
 class Camera:
@@ -11,7 +12,7 @@ class Camera:
         self.t = trimesh.transformations.translation_matrix([0, 0.0, 3.2])
 
     def V(self):
-        return trimesh.transformations.inverse_matrix(self.t)
+        return gpu_f32(trimesh.transformations.inverse_matrix(self.t))
 
     def P(self):
         raise NotImplementedError
@@ -35,12 +36,12 @@ class PerspectiveCamera(Camera):
     def P(self):
         cx, cy = self.w / 2, self.h / 2
         fx = fy = calibur.fov_to_focal(numpy.radians(self.fov), self.h)
-        return calibur.projection_gl_persp(
+        return gpu_f32(calibur.projection_gl_persp(
             self.w, self.h,
             cx, cy,
             fx, fy,
             self.near, self.far
-        )
+        ))
 
     def resolution(self):
         return self.h, self.w

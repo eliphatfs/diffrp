@@ -7,9 +7,11 @@ from trimesh.visual.material import PBRMaterial
 from dataclasses import dataclass
 from typing import List, Optional
 
-from .. import colors
-from ..shader_ops import *
+from ..utils import colors
+from ..utils.shader_ops import *
 from ..plugins import mikktspace
+from ..scene import Scene, MeshObject
+from ..rendering.camera import PerspectiveCamera
 from ..materials.gltf_material import GLTFMaterial, GLTFSampler
 
 
@@ -89,49 +91,58 @@ def to_gltf_material(verts: torch.Tensor, visual):
     return uv, color, default_mat
 
 
-class GLTFLoader:
-    prims: List[GLTFMeshPrimitive]
+def load_gltf_scene(path, compute_tangents=False) -> Scene:
+    drp_scene = Scene()
 
-    def __init__(self, path, compute_tangents=False) -> None:
-        scene: trimesh.Scene = trimesh.load(path, force='scene', process=False)
-        meshes: List[trimesh.Trimesh] = []
-        transforms: List[torch.Tensor] = []
-        discarded = 0
-        for node_name in scene.graph.nodes_geometry:
-            transform, geometry_name = scene.graph[node_name]
-            # get a copy of the geometry
-            current = scene.geometry[geometry_name]
-            if isinstance(current, trimesh.Trimesh):
-                meshes.append(current)
-                transforms.append(gpu_f32(transform))
-        logging.info("Loaded scene %s with %d submeshes and %d discarded curve/pcd geometry", path, len(meshes), discarded)
-        self.prims = []
-        for transform, mesh in zip(transforms, meshes):
-            verts = gpu_f32(mesh.vertices)
-            uv, color, mat = to_gltf_material(verts, mesh.visual)
-            # TODO: load vertex tangents if existing
-            if 'vertex_normals' in mesh._cache and not compute_tangents:
-                self.prims.append(GLTFMeshPrimitive(
-                    mat, verts,
-                    gpu_i32(mesh.faces),
-                    gpu_f32(mesh.vertex_normals),
-                    uv, color, transform
-                ))
+    scene: trimesh.Scene = trimesh.load(path, force='scene', process=False)
+    if scene.has_camera:
+        camera = PerspectiveCamera(
+            float(scene.camera.fov[1]),
+            round(float(scene.camera.resolution[1])),
+            round(float(scene.camera.resolution[0])),
+            float(scene.camera.z_near),
+            float(scene.camera.z_far)
+        )
+        camera.t = scene.camera_transform
+        drp_scene.camera = camera
+    meshes: List[trimesh.Trimesh] = []
+    transforms: List[torch.Tensor] = []
+    discarded = 0
+    for node_name in scene.graph.nodes_geometry:
+        transform, geometry_name = scene.graph[node_name]
+        # get a copy of the geometry
+        current = scene.geometry[geometry_name]
+        if isinstance(current, trimesh.Trimesh):
+            meshes.append(current)
+            transforms.append(gpu_f32(transform))
+    logging.info("Loaded scene %s with %d submeshes and %d discarded curve/pcd geometry", path, len(meshes), discarded)
+    for transform, mesh in zip(transforms, meshes):
+        verts = gpu_f32(mesh.vertices)
+        uv, color, mat = to_gltf_material(verts, mesh.visual)
+        # TODO: load vertex tangents if existing
+        if 'vertex_normals' in mesh._cache and not compute_tangents:
+            drp_scene.add_mesh_object(MeshObject(
+                mat, verts,
+                gpu_i32(mesh.faces),
+                gpu_f32(mesh.vertex_normals),
+                transform, color, uv
+            ))
+        else:
+            flat_idx = mesh.faces.reshape(-1)
+            # GLTF 2.0 specifications 3.7.2.1
+            # if normal does not exist in data
+            # client must calculate *flat* normals
+            if 'vertex_normals' in mesh._cache:
+                normals = mesh.vertex_normals[flat_idx]
             else:
-                flat_idx = mesh.faces.reshape(-1)
-                # GLTF 2.0 specifications 3.7.2.1
-                # if normal does not exist in data
-                # client must calculate *flat* normals
-                if 'vertex_normals' in mesh._cache:
-                    normals = mesh.vertex_normals[flat_idx]
-                else:
-                    normals = numpy.stack([mesh.face_normals] * 3, axis=1).reshape(-1, 3)
-                self.prims.append(GLTFMeshPrimitive(
-                    mat, verts[flat_idx],
-                    gpu_i32(numpy.arange(len(flat_idx)).reshape(-1, 3)),
-                    gpu_f32(normals),
-                    uv[flat_idx], color[flat_idx], transform
-                ))
-        if compute_tangents:
-            for prim in self.prims:
-                prim.tangents = mikktspace.execute(prim.verts, prim.normals, prim.uv)
+                normals = numpy.stack([mesh.face_normals] * 3, axis=1).reshape(-1, 3)
+            drp_scene.add_mesh_object(MeshObject(
+                mat, verts[flat_idx],
+                gpu_i32(numpy.arange(len(flat_idx)).reshape(-1, 3)),
+                gpu_f32(normals),
+                transform, color[flat_idx], uv[flat_idx]
+            ))
+    if compute_tangents:
+        for mesh_obj in drp_scene.objects:
+            mesh_obj.tangents = mikktspace.execute(mesh_obj.verts, mesh_obj.normals, mesh_obj.uv)
+    return drp_scene
