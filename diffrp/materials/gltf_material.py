@@ -57,7 +57,7 @@ class GLTFMaterial(SurfaceMaterial):
 
         return SurfaceOutputStandard(
             rgba.rgb,
-            self.normal_texture.sample(si.uv) * 2 + 1,
+            self.normal_texture.sample(si.uv) * 2 - 1,
             self.emissive_factor * self.emissive_texture.sample(si.uv),
             self.metallic_factor * mr.b,
             1.0 - self.roughness_factor * mr.g,
