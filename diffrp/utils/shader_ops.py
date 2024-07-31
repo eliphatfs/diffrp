@@ -93,8 +93,8 @@ def saturate(x: torch.Tensor):
     return torch.clamp(x, 0.0, 1.0)
 
 
-def split_31(x: torch.Tensor):
-    return x[..., :3], x[..., 3:]
+def split_alpha(x: torch.Tensor):
+    return x[..., :-1], x[..., -1:]
 
 
 def normalized(x: torch.Tensor):
@@ -105,17 +105,27 @@ def length(x: torch.Tensor):
     return torch.norm(x, dim=-1, keepdim=True)
 
 
-def float4(*tensors):
+def floatx(*tensors):
     tensors = [x if torch.is_tensor(x) else gpu_f32(x) for x in tensors]
     tensors = rst.supercat(tensors, dim=-1)
+    return tensors
+
+
+def float4(*tensors):
+    tensors = floatx(*tensors)
     assert tensors.shape[-1] == 4
     return tensors
 
 
 def float3(*tensors):
-    tensors = [x if torch.is_tensor(x) else gpu_f32(x) for x in tensors]
-    tensors = rst.supercat(tensors, dim=-1)
+    tensors = floatx(*tensors)
     assert tensors.shape[-1] == 3
+    return tensors
+
+
+def float2(*tensors):
+    tensors = floatx(*tensors)
+    assert tensors.shape[-1] == 2
     return tensors
 
 

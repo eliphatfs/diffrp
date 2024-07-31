@@ -1,13 +1,18 @@
 import torch
-from .shader_ops import saturate, float4, split_31
+from typing import Union, List
+from .shader_ops import saturate, split_alpha
 
 
-def alpha_blend(background: torch.Tensor, foreground: torch.Tensor):
-    rgb, a = split_31(foreground)
-    return background * (1 - a) + float4(rgb * a, a)
+def background_alpha_compose(bg: Union[torch.Tensor, List[Union[float, int]], float, int], fgca: torch.Tensor):
+    fgc, fga = split_alpha(fgca)
+    if not torch.is_tensor(bg):
+        bg = fgca.new_tensor(bg)
+    return fgc * fga + bg * (1 - fga)
 
 
-def additive(background: torch.Tensor, foreground: torch.Tensor):
-    brgb, ba = split_31(background)
-    frgb, fa = split_31(foreground)
-    return float4(brgb + frgb, saturate(ba + fa))
+def alpha_blend(bgc: torch.Tensor, bga: torch.Tensor, fgc: torch.Tensor, fga: torch.Tensor):
+    return bgc * (1 - fga) + fgc * fga, bga * (1 - fga) + fga
+
+
+def additive(bgc: torch.Tensor, bga: torch.Tensor, fgc: torch.Tensor, fga: torch.Tensor):
+    return bgc + fgc, saturate(bga + fga)

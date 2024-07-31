@@ -7,7 +7,7 @@ import unittest
 import trimesh.creation
 import nvdiffrast.torch as dr
 import matplotlib.pyplot as plotlib
-from diffrp.scene.camera import PerspectiveCamera
+from diffrp.rendering.camera import PerspectiveCamera
 from diffrp.rendering.surface_deferred import *
 from diffrp.utils.shader_ops import *
 from diffrp.utils.geometry import compute_face_normals, make_face_soup

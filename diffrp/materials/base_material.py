@@ -13,12 +13,16 @@ from ..utils.shader_ops import float4, normalized, transform_point4x3, transform
 class VertexArrayObject:
     # geometry
     verts: torch.Tensor
-    tris: torch.IntTensor
     normals: torch.Tensor
     world_pos: torch.Tensor
+
+    # index buffers
+    tris: torch.IntTensor
     stencils: torch.ShortTensor
+    # REVIEW: this seems coupled with implementation details of render pipelines
+    # can we make this only for the material?
     
-    # attributes
+    # vertex attributes
     color: torch.Tensor
     uv: torch.Tensor
     tangents: torch.Tensor
@@ -75,6 +79,12 @@ class SurfaceInput:
     def world_pos(self) -> torch.Tensor:
         # F3, world position
         return self.interpolate_ex(self.vertex_buffers.world_pos)
+
+    @property
+    @cached
+    def local_pos(self) -> torch.Tensor:
+        # F3, world position
+        return self.interpolate_ex(self.vertex_buffers.verts)
 
     @property
     @cached
