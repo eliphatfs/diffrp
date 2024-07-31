@@ -1,7 +1,7 @@
 import torch
 from dataclasses import dataclass
 from typing_extensions import Literal
-from ..rendering.surface_deferred import SurfaceInput, SurfaceMaterial, SurfaceOutputStandard, SurfaceUniform
+from .base_material import SurfaceInput, SurfaceMaterial, SurfaceOutputStandard, SurfaceUniform
 from ..utils.shader_ops import sample2d, ones_like_vec
 
 
