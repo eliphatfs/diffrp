@@ -70,7 +70,7 @@ class SurfaceDeferredRenderSession:
             self._checked_cat([obj.normals for obj in objs], verts_ref, 3),
             torch.cat(world_pos),
             torch.cat(tris).int().contiguous(),
-            torch.cat(sts).short().contiguous(),
+            torch.cat(sts).int().contiguous(),
             self._checked_cat([obj.color for obj in objs], verts_ref, None),
             self._checked_cat([obj.uv for obj in objs], verts_ref, 2),
             self._checked_cat([obj.tangents for obj in objs], verts_ref, 4),
@@ -91,7 +91,8 @@ class SurfaceDeferredRenderSession:
         clip_space = self.clip_space()
         h, w = self.camera.resolution()
         r_layers: List[torch.Tensor] = []
-        with dr.DepthPeeler(self.ctx, clip_space, vao.tris.contiguous(), (h, w)) as dp:
+        rng = torch.tensor([[0, len(vao.tris)]], dtype=torch.int32)
+        with dr.DepthPeeler(self.ctx, clip_space, vao.tris.contiguous(), (h, w), rng) as dp:
             for i in range(self.max_layers):
                 rast, rast_db = dp.rasterize_next_layer()
                 if (i < self.max_layers - 1) and (rast.a <= 0).all():
@@ -134,7 +135,7 @@ class SurfaceDeferredRenderSession:
                     stencil_lookup.append(len(buffer))
                     buffer.append(op)
             stencil_lookup = vao.stencils.new_tensor(stencil_lookup)
-            gbuffers.append(torch.cat(buffer)[stencil_lookup[vao.stencils][rast.a.int()]])
+            gbuffers.append(torch.gather(torch.cat(buffer), 0, stencil_lookup[vao.stencils][rast.a.int()].repeat_interleave(len(default), dim=-1).long()))
         return gbuffers
 
     def compose_layers(
@@ -151,9 +152,7 @@ class SurfaceDeferredRenderSession:
         frame_alpha = alphas[-1]
         for g, a in zip(reversed(colors[:-1]), reversed(alphas[:-1])):
             frame_buffer, frame_alpha = blend_fn(frame_buffer, frame_alpha, g, a)
-        if return_alpha:
-            return floatx(frame_buffer, frame_alpha)
-        return frame_buffer
+        return torch.flipud((floatx(frame_buffer, frame_alpha) if return_alpha else frame_buffer).squeeze(0))
 
     @cached
     def alpha_layered(self):
@@ -201,7 +200,7 @@ class SurfaceDeferredRenderSession:
     def camera_space_normal_layered(self):
         world_normals = self.world_space_normal_layered()
         return [
-            float4(normalized(transform_vector3x3(world_normal.xyz, self.camera.V())), world_normal.a)
+            normalized(transform_vector3x3(world_normal, self.camera.V()))
             for world_normal in world_normals
         ]
 
