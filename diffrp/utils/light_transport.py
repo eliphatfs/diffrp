@@ -1,10 +1,11 @@
 import math
 import torch
-from typing import List
-from diffrp.utils.shader_ops import normalized, float2, float3, cross, dot, sample2d, to_bchw, to_hwc, saturate
+from typing import List, Optional
+from ..utils.shader_ops import normalized, float2, float3, cross, dot, sample2d, saturate
 
 
-def radical_inverse_van_der_corput(bits: torch.Tensor):
+@torch.jit.script
+def radical_inverse_van_der_corput(bits: torch.LongTensor):
     bits = (bits << 16) | (bits >> 16)
     bits = ((bits & 0x55555555) << 1) | ((bits & 0xAAAAAAAA) >> 1)
     bits = ((bits & 0x33333333) << 2) | ((bits & 0xCCCCCCCC) >> 2)
@@ -13,10 +14,14 @@ def radical_inverse_van_der_corput(bits: torch.Tensor):
     return bits.float() * 2.3283064365386963e-10
 
 
-def hammersley(n: int, device='cuda'):
+@torch.jit.script
+def hammersley(n: int, deterministic: bool = False, device: Optional[torch.device] = None):
     i = torch.arange(n, dtype=torch.int64, device=device)
     x = i.float() * (1 / n)
     y = radical_inverse_van_der_corput(i)
+    if not deterministic:
+        x = (x + torch.rand(1, dtype=x.dtype, device=x.device)) % 1.0
+        y = (y + torch.rand(1, dtype=x.dtype, device=x.device)) % 1.0
     return x, y
 
 
@@ -26,6 +31,7 @@ def normal_distribution_function_ggx(n_dot_h: torch.Tensor, roughness: float):
     return (a * a / math.pi + 1e-7) / (f * f + 1e-7)
 
 
+@torch.jit.script
 def importance_sample_ggx(x: torch.Tensor, y: torch.Tensor, n: torch.Tensor, roughness: float):
     """
     GGX Importance Sampling.
@@ -45,12 +51,20 @@ def importance_sample_ggx(x: torch.Tensor, y: torch.Tensor, n: torch.Tensor, rou
     """
     a = roughness * roughness
     phi = math.tau * x
-    cos_theta = torch.sqrt((1 - y) / (1 + (a * a - 1) * y))
+    if roughness < 1e-4:
+        cos_theta = torch.ones_like(y)
+    else:
+        cos_theta = torch.sqrt((1 - y) / (1 + (a * a - 1) * y))
     sin_theta = torch.sqrt(1 - cos_theta * cos_theta)
     hx = torch.cos(phi) * sin_theta
     hy = torch.sin(phi) * sin_theta
     hz = cos_theta
-    up = torch.where(n.y < 0.999, n.new_tensor([0, 1, 0]), n.new_tensor([1, 0, 0]))
+    up = torch.where(
+        n[..., 1:2] < 0.999,
+        torch.tensor([0, 1, 0], dtype=n.dtype, device=n.device),
+        torch.tensor([1, 0, 0], dtype=n.dtype, device=n.device)
+    )
+    # cannot use .y and .new_tensor shorthands for jit scripted function
     tangent = normalized(cross(up, n))
     bitangent = cross(n, tangent)
     # n: ..., 3
@@ -64,7 +78,7 @@ def importance_sample_ggx(x: torch.Tensor, y: torch.Tensor, n: torch.Tensor, rou
 def prefilter_env_map(
     env: torch.Tensor,
     base_resolution: int = 128, num_levels: int = 5,
-    num_samples: int = 1024
+    num_samples: int = 1024, deterministic: bool = False
 ):
     H = base_resolution
     W = H * 2
@@ -79,7 +93,7 @@ def prefilter_env_map(
         r = float3(x.unsqueeze(-1), y.unsqueeze(-1), z.unsqueeze(-1))  # h, w, 3
 
         n = v = r
-        x, y = hammersley(num_samples, env.device)  # n
+        x, y = hammersley(num_samples, deterministic, env.device)  # n
         h = importance_sample_ggx(x, y, n, roughness)  # n, h, w, 3
 
         L = normalized(2.0 * dot(v, h) * h - v)  # broadcast, n, h, w, 3
