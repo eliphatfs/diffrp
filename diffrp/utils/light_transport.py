@@ -2,7 +2,7 @@ import math
 import torch
 import torch_redstone as rst
 import matplotlib.pyplot as plotlib
-from diffrp.utils.shader_ops import normalized
+from diffrp.utils.shader_ops import normalized, float3
 
 
 def radical_inverse_van_der_corput(bits: torch.Tensor):
@@ -21,7 +21,23 @@ def hammersley(n: int, device='cuda'):
     return x, y
 
 
-def importance_sample_ggx(x: torch.Tensor, y: torch.Tensor, n: torch.Tensor, roughness: torch.Tensor):
+def importance_sample_ggx(x: torch.Tensor, y: torch.Tensor, n: torch.Tensor, roughness: float):
+    """
+    GGX Importance Sampling.
+
+    Note:
+        Due to different roughness values usually require different resolutions of `n`,
+        we do not support batched roughness values in this function.
+
+    Args:
+        x (torch.Tensor): sample sequence element 1, shape (n) in [0, 1)
+        y (torch.Tensor): sample sequence element 2, shape (n) in [0, 1)
+        n (torch.Tensor): (batched) normal vectors, shape (..., 3)
+        roughness (float): the roughness level
+    
+    Returns:
+        torch.Tensor: sampled ray directions, shape (..., n, 3)
+    """
     a = roughness * roughness
     phi = math.tau * x
     cos_theta = torch.sqrt((1 - y) / (1 + (a * a - 1) * y))
@@ -30,8 +46,9 @@ def importance_sample_ggx(x: torch.Tensor, y: torch.Tensor, n: torch.Tensor, rou
         torch.cos(phi) * sin_theta,
         torch.sin(phi) * sin_theta,
         cos_theta
-    ])
-    up = torch.where(n.z < 0.999, n.new_tensor([0, 1, 0]), n.new_tensor([1, 0, 0]))
+    ], dim=-1)
+    n = n.unsqueeze(-2)  # ..., 1, 3
+    up = torch.where(n.y < 0.999, n.new_tensor([0, 1, 0]), n.new_tensor([1, 0, 0]))
     tangent = normalized(torch.cross(up, n, dim=-1))
     bitangent = torch.cross(n, tangent, dim=-1)
     sample_vec = tangent * h.x + bitangent * h.y + n * h.z
