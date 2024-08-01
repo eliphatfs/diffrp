@@ -35,6 +35,6 @@ setuptools.setup(
         'typing_extensions',
         'nvdiffrast @ git+https://github.com/eliphatfs/nvdiffrast.git',
     ],
-    package_data={"diffrp.plugins": ["**/*.c", "**/*.h"]},
+    package_data={"diffrp.plugins": ["**/*.c", "**/*.h"], "diffrp": ["resources/**/*.*"]},
     python_requires='~=3.7'
 )

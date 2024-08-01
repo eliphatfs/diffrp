@@ -43,3 +43,25 @@ def aces_fit(color: torch.Tensor):
     v = v.matmul(aces_o.T)
 
     return torch.clamp(v, 0, 1)
+
+
+def linear_to_alexa_logc_ei1000(x):
+    cut = 0.010591
+    a = 5.555556
+    b = 0.052272
+    c = 0.247190
+    d = 0.385537
+    e = 5.367655
+    f = 0.092809
+    return torch.where(x > cut, c * torch.log10(a * x + b) + d, e * x + f)
+
+
+def alexa_logc_ei1000_to_linear(logc):
+    cut = 0.010591
+    a = 5.555556
+    b = 0.052272
+    c = 0.247190
+    d = 0.385537
+    e = 5.367655
+    f = 0.092809
+    return torch.where(logc > e * cut + f, (10 ** ((logc - d) / c) - b) / a, (logc - f) / e)
