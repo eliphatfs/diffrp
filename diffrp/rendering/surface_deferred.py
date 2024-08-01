@@ -7,7 +7,7 @@ from ..utils.cache import cached
 from .interpolator import Interpolator
 from ..utils.composite import alpha_blend
 from ..materials.base_material import VertexArrayObject, SurfaceInput, SurfaceUniform, SurfaceOutputStandard
-from ..utils.shader_ops import gpu_f32, transform_point, transform_point4x3, ones_like_vec, zeros_like_vec, floatx, float3, float4, normalized, transform_vector3x3, length
+from ..utils.shader_ops import gpu_f32, transform_point, transform_point4x3, ones_like_vec, zeros_like_vec, floatx, float3, float4, normalized, transform_vector3x3, length, cross
 
 
 class SurfaceDeferredRenderSession:
@@ -184,7 +184,7 @@ class SurfaceDeferredRenderSession:
             vn = si.world_normal_unnormalized
             vnt = so.normal
             vt, vs = si.world_tangent.xyz, si.world_tangent.w
-            vb = vs * torch.cross(vn, vt, dim=-1)
+            vb = vs * cross(vn, vt)
             return normalized(vnt.x * vt + vnt.y * vb + vnt.z * vn)
         if so.normal_space == 'object':
             return normalized(transform_vector3x3(so.normal, si.uniforms.M))

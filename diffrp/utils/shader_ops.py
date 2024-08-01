@@ -251,6 +251,21 @@ def _make_attr(attr: str, idx: str):
     setattr(torch.Tensor, attr, property(operator.itemgetter((..., indexer))))
 
 
+if hasattr(torch.linalg, 'vecdot'):
+    def dot(a: torch.Tensor, b: torch.Tensor):
+        return torch.linalg.vecdot(a, b).unsqueeze(-1)
+else:
+    def dot(a: torch.Tensor, b: torch.Tensor):
+        return (a * b).sum(-1, keepdim=True)
+
+if hasattr(torch.linalg, 'cross'):
+    def cross(a: torch.Tensor, b: torch.Tensor):
+        return torch.linalg.cross(a, b)
+else:
+    def cross(a: torch.Tensor, b: torch.Tensor):
+        return torch.cross(a, b, dim=-1)
+
+
 indices = ['xyzw', 'rgba']
 for idx in indices:
     comb = [''.join(x) for x in itertools.product([''] + list(idx), repeat=len(idx))]

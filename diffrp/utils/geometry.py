@@ -1,5 +1,5 @@
 import torch
-from .shader_ops import normalized
+from .shader_ops import normalized, cross
 
 
 def make_face_soup(verts, tris, face_normals):
@@ -11,8 +11,8 @@ def make_face_soup(verts, tris, face_normals):
 
 
 def compute_face_normals(verts: torch.Tensor, faces: torch.Tensor, normalize=False):
-    face_normals = torch.cross(verts[faces[:, 1]] - verts[faces[:, 0]], 
-                               verts[faces[:, 2]] - verts[faces[:, 0]], dim=1)
+    face_normals = cross(verts[faces[:, 1]] - verts[faces[:, 0]], 
+                         verts[faces[:, 2]] - verts[faces[:, 0]])
     return normalized(face_normals) if normalize else face_normals
 
 
