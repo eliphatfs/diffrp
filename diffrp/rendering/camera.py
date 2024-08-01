@@ -65,9 +65,9 @@ class PerspectiveCamera(Camera):
         r = radius
         cam = cls(h=h, w=w)
         theta, phi = math.radians(azim), math.radians(elev)
-        z = r * math.cos(theta) * math.sin(phi)
-        x = r * math.sin(theta) * math.sin(phi)
-        y = r * math.cos(phi)
+        z = r * math.cos(theta) * math.cos(phi)
+        x = r * math.sin(theta) * math.cos(phi)
+        y = r * math.sin(phi)
         cam.t = trimesh.transformations.translation_matrix([x, y, z])
         cam.lookat(origin)
         return cam

@@ -87,7 +87,7 @@ class TestGLTF(unittest.TestCase):
     def render_gltf(self, fp):
         name = os.path.splitext(os.path.basename(fp))[0]
         ctx = self.ctx
-        cam = PerspectiveCamera.from_orbit(640, 640, 3.8, 30, 70, [0, 0, 0])
+        cam = PerspectiveCamera.from_orbit(640, 640, 3.8, 30, 20, [0, 0, 0])
         gltf = normalize(load_gltf_scene(fp, compute_tangents=True))
         rp = SurfaceDeferredRenderSession(ctx, gltf, cam, False)
         frame = rp.albedo()
