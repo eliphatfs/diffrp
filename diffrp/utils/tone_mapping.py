@@ -13,5 +13,6 @@ def agx_base_contrast(rgb: torch.Tensor):
         lut[None].permute(0, 4, 1, 2, 3),
         logc[None, None] * 2 - 1,
         mode='bilinear',
-        padding_mode='border'
+        padding_mode='border',
+        align_corners=False
     ).permute(0, 2, 3, 4, 1).reshape_as(rgb))
