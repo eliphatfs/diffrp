@@ -36,3 +36,13 @@ def key_cached(func: FuncType) -> FuncType:
         return cached_func(self, arg, lambda: func(self, arg))
 
     return wrapped
+
+
+@staticmethod
+def singleton_cached(func: FuncType) -> FuncType:
+
+    @functools.wraps(func)
+    def wrapped():
+        return cached_func(func, func.__qualname__, lambda: func())
+
+    return wrapped

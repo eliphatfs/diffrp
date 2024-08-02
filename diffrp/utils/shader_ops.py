@@ -1,10 +1,10 @@
 import numpy
 import torch
 import operator
-import functools
 import itertools
 import torch_redstone as rst
 import torch.nn.functional as F
+from .cache import singleton_cached
 
 
 def gpu_f32(inputs):
@@ -233,22 +233,22 @@ def hsv2rgb_internal(hsv: torch.Tensor) -> torch.Tensor:
     return rgb
 
 
-@functools.lru_cache(maxsize=None)
+@singleton_cached
 def white_tex():
     return gpu_f32(numpy.ones([16, 16, 4], dtype=numpy.float32))
 
 
-@functools.lru_cache(maxsize=None)
+@singleton_cached
 def black_tex():
     return gpu_f32(numpy.zeros([16, 16, 4], dtype=numpy.float32))
 
 
-@functools.lru_cache(maxsize=None)
+@singleton_cached
 def gray_tex():
     return gpu_f32(numpy.full([16, 16, 4], 0.5, dtype=numpy.float32))
 
 
-@functools.lru_cache(maxsize=None)
+@singleton_cached
 def empty_normal_tex():
     return gpu_f32(numpy.full([16, 16, 3], [0.5, 0.5, 1.0], dtype=numpy.float32))
 
