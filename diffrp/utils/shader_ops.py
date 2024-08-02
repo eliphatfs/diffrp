@@ -89,6 +89,11 @@ def sample2d(
         texcoords = float2(tx, texcoords.y)
         del tx
         wrap = "reflection"
+    if wrap == "cyclic":
+        texture2d = texture2d.tile(2, 2, 1)
+        texcoords = (texcoords % 1.0) * 0.5
+        texcoords = torch.where(texcoords >= 0.25, texcoords, texcoords + 0.5)
+        wrap = "reflection"
     texcoords = texcoords * 2 - 1
     sampled = F.grid_sample(
         torch.flipud(texture2d)[None].permute(0, 3, 1, 2),
