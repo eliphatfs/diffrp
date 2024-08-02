@@ -2,12 +2,14 @@ import torch
 import nvdiffrast.torch as dr
 from typing import Union, List, Tuple, Callable, Optional
 from .camera import Camera
-from ..scene.scene import Scene
 from ..utils.cache import cached
+from ..utils.shader_ops import *
 from .interpolator import Interpolator
 from ..utils.composite import alpha_blend
+from ..scene import Scene, ImageEnvironmentLight
+from ..utils.coordinates import unit_direction_to_latlong_uv
 from ..materials.base_material import VertexArrayObject, SurfaceInput, SurfaceUniform, SurfaceOutputStandard
-from ..utils.shader_ops import gpu_f32, transform_point, transform_point4x3, ones_like_vec, zeros_like_vec, floatx, float3, float4, normalized, transform_vector3x3, length, cross
+from ..utils.light_transport import prefilter_env_map, pre_integral_env_brdf, irradiance_integral_env_map, fresnel_schlick_roughness
 
 
 class SurfaceDeferredRenderSession:
@@ -221,6 +223,10 @@ class SurfaceDeferredRenderSession:
         return self.gbuffer_collect(lambda x, y: x.local_pos, [0., 0., 0.])
 
     @cached
+    def view_dir_layered(self):
+        return self.gbuffer_collect(lambda x, y: x.view_dir, [0., 0., -1.])
+
+    @cached
     def albedo(self):
         return self.compose_layers(self.albedo_layered())
 
@@ -270,3 +276,71 @@ class SurfaceDeferredRenderSession:
     @cached
     def distance(self):
         return self.compose_layers(self.distance_layered(), return_alpha=False)
+
+    def ibl(
+        self,
+        light: ImageEnvironmentLight,
+        world_normal: torch.Tensor,
+        view_dir: torch.Tensor,
+        mso: torch.Tensor,
+        albedo: torch.Tensor
+    ):
+        env_brdf = pre_integral_env_brdf()
+        pre_levels = prefilter_env_map(light.image, deterministic=True)
+        irradiance = irradiance_integral_env_map(light.image)
+
+        n_dot_v = torch.relu(dot(world_normal, -view_dir))
+        r = reflect(view_dir, world_normal)
+        r_uv = float2(*unit_direction_to_latlong_uv(r))
+        n_uv = float2(*unit_direction_to_latlong_uv(world_normal))
+
+        pre_lod = (len(pre_levels) - 1) * saturate(1 - mso.y)
+        pre_fetch = 0
+        for i, level in enumerate(pre_levels):
+            pre_level = sample2d(level, r_uv, 'cyclic-reflection', 'bicubic')
+            pre_weight = torch.relu(1 - torch.abs(pre_lod - i))
+            pre_fetch = pre_fetch + pre_level * pre_weight
+
+        brdf = sample2d(env_brdf, float2(n_dot_v, mso.y))
+        irradiance_fetch = sample2d(irradiance, n_uv, 'cyclic-reflection', 'bicubic')
+
+        f0 = 0.04 * (1.0 - mso.x) + albedo * mso.x
+        f = fresnel_schlick_roughness(n_dot_v, f0, 1 - mso.y)
+
+        specular = pre_fetch * (f * brdf.x + brdf.y)
+        diffuse = irradiance_fetch * albedo * (1.0 - mso.x) * (1 - f)
+        return (specular + diffuse) * mso.z
+    
+    def pbr_layer(
+        self,
+        world_normal: torch.Tensor,
+        view_dir: torch.Tensor,
+        mso: torch.Tensor,
+        albedo: torch.Tensor
+    ):
+        render = torch.zeros_like(albedo)
+        for light in self.scene.lights:
+            if isinstance(light, ImageEnvironmentLight):
+                render = render + self.ibl(light, world_normal, view_dir, mso, albedo)
+        return render
+
+    @cached
+    def pbr_layered(self):
+        return [
+            self.pbr_layer(world_normal, view_dir, mso, albedo)
+            for world_normal, view_dir, mso, albedo in zip(
+                self.world_space_normal_layered(),
+                self.view_dir_layered(),
+                self.mso_layered(),
+                self.albedo_layered()
+            )
+        ]
+
+    @cached
+    def pbr(self):
+        # skybox = []
+        # skybox_alpha = []
+        # for light in self.scene.lights:
+        #     if isinstance(light, ImageEnvironmentLight) and light.render_skybox:
+        #         skybox.append(sample2d(light.image, ))
+        return self.compose_layers(self.pbr_layered())

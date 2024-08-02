@@ -3,7 +3,7 @@ import torch
 import torch.nn.functional as F
 from typing import Optional
 from .cache import singleton_cached
-from .shader_ops import normalized, float2, float3, cross, dot, sample2d, to_bchw, to_hwc
+from .shader_ops import normalized, float2, float3, cross, dot, sample2d, to_bchw, to_hwc, saturate
 from .coordinates import angles_to_unit_direction, unit_direction_to_latlong_uv, latlong_grid
 
 
@@ -144,7 +144,7 @@ def irradiance_integral_env_map(
     values = sample2d(env, uv) * torch.cos(sample_phi) * torch.sin(sample_phi)  # h, w, hp, wp, 3
     # sample_phi: hp, 1, 1
     values = values.mean([-2, -3])
-    return values
+    return values * math.pi
 
 
 def geometry_schlick_ggx(n_dot_v: torch.Tensor, roughness: torch.Tensor):
@@ -161,6 +161,10 @@ def geometry_smith(n: torch.Tensor, v: torch.Tensor, L: torch.Tensor, roughness:
     ggx2 = geometry_schlick_ggx(n_dot_v, roughness)
     ggx1 = geometry_schlick_ggx(n_dot_L, roughness)
     return ggx1 * ggx2
+
+
+def fresnel_schlick_roughness(cos_theta, f0, roughness):
+    return f0 + (torch.maximum(1.0 - roughness, f0) - f0) * (saturate(1.0 - cos_theta) ** 5.0)
 
 
 @singleton_cached
@@ -185,4 +189,4 @@ def pre_integral_env_brdf():
         g_vis = (g * v_dot_h) / (n_dot_h * n_dot_v)
         fc = (1 - v_dot_h) ** 5
         results.append((g_vis * float2(1 - fc, fc)).mean(0))
-    return torch.flipud(torch.stack(results)).contiguous()
+    return torch.stack(results)

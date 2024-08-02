@@ -104,6 +104,10 @@ def sample2d(
     return sampled.reshape(*original_shape[:-1], texture2d.shape[-1]).contiguous()
 
 
+def reflect(i: torch.Tensor, n: torch.Tensor):
+    return i - 2.0 * dot(n, i) * n
+
+
 def saturate(x: torch.Tensor):
     return torch.clamp(x, 0.0, 1.0)
 
