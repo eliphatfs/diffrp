@@ -1,7 +1,8 @@
 import math
 import torch
-from typing import List, Optional
-from ..utils.shader_ops import normalized, float2, float3, cross, dot, sample2d, saturate
+import torch.nn.functional as F
+from typing import Optional
+from ..utils.shader_ops import normalized, float2, float3, cross, dot, sample2d, saturate, to_bchw, to_hwc
 
 
 @torch.jit.script
@@ -82,8 +83,11 @@ def prefilter_env_map(
 ):
     H = base_resolution
     W = H * 2
-    levels: List[torch.Tensor] = []
-    for i in range(num_levels):
+    env = to_hwc(F.interpolate(to_bchw(env), [H, W], mode='area'))
+    levels = [env]
+    for i in range(1, num_levels):
+        H = H // 2
+        W = W // 2
         roughness = i / (num_levels - 1)
         phi = torch.linspace(math.pi / 2 - (math.pi / 4 / H), -math.pi / 2 + (math.pi / 4 / H), H, dtype=env.dtype, device=env.device)[..., None]
         theta = torch.arange(W, dtype=env.dtype, device=env.device) * (math.tau / W)
@@ -113,7 +117,4 @@ def prefilter_env_map(
 
         values = torch.einsum('nhwc,nhw->hwc', values, n_dot_L.squeeze(-1))
         levels.append(values / (weights + 1e-4))
-
-        H = H // 2
-        W = W // 2
     return levels
