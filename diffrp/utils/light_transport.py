@@ -2,6 +2,7 @@ import math
 import torch
 import torch.nn.functional as F
 from typing import Optional
+from .cache import singleton_cached
 from .shader_ops import normalized, float2, float3, cross, dot, sample2d, to_bchw, to_hwc
 from .coordinates import angles_to_unit_direction, unit_direction_to_latlong_uv, latlong_grid
 
@@ -144,3 +145,44 @@ def irradiance_integral_env_map(
     # sample_phi: hp, 1, 1
     values = values.mean([-2, -3])
     return values
+
+
+def geometry_schlick_ggx(n_dot_v: torch.Tensor, roughness: torch.Tensor):
+    a = roughness
+    k = (a * a) / 2.0
+    nom = n_dot_v
+    denom = n_dot_v * (1.0 - k) + k
+    return nom / denom
+
+
+def geometry_smith(n: torch.Tensor, v: torch.Tensor, L: torch.Tensor, roughness: torch.Tensor):
+    n_dot_v = torch.relu(dot(n, v))
+    n_dot_L = torch.relu(dot(n, L))
+    ggx2 = geometry_schlick_ggx(n_dot_v, roughness)
+    ggx1 = geometry_schlick_ggx(n_dot_L, roughness)
+    return ggx1 * ggx2
+
+
+@singleton_cached
+def pre_integral_env_brdf():
+    device = 'cuda'
+    s = 256
+    n_dot_v = torch.linspace(0 + 0.5 / s, 1 - 0.5 / s, s, device=device, dtype=torch.float32)[..., None]
+
+    v = float3(torch.sqrt(1.0 - n_dot_v * n_dot_v), 0.0, n_dot_v)
+    n = n_dot_v.new_tensor([0, 0, 1]).expand_as(v)
+
+    rx, ry = hammersley(1024, True, device)  # n
+    results = []
+    for i in range(256):
+        roughness = (i + 0.5) / 256
+        h = importance_sample_ggx(rx, ry, n, roughness)  # n, s, 3
+        L = normalized(2 * dot(v, h) * h - v)
+        # n_dot_L = torch.relu(L.z)
+        n_dot_h = torch.relu(h.z)
+        v_dot_h = torch.relu(dot(v, h))
+        g = geometry_smith(n, v, L, roughness)
+        g_vis = (g * v_dot_h) / (n_dot_h * n_dot_v)
+        fc = (1 - v_dot_h) ** 5
+        results.append((g_vis * float2(1 - fc, fc)).mean(0))
+    return torch.flipud(torch.stack(results)).contiguous()
