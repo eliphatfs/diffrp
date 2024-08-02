@@ -1,15 +1,28 @@
 import torch
 import nvdiffrast.torch as dr
+from dataclasses import dataclass
+from typing_extensions import Literal
 from typing import Union, List, Tuple, Callable, Optional
 from .camera import Camera
 from ..utils.cache import cached
 from ..utils.shader_ops import *
-from .interpolator import Interpolator
 from ..utils.composite import alpha_blend
 from ..scene import Scene, ImageEnvironmentLight
 from ..utils.coordinates import unit_direction_to_latlong_uv
+from .interpolator import FullScreenInterpolator, MaskedSparseInterpolator
 from ..materials.base_material import VertexArrayObject, SurfaceInput, SurfaceUniform, SurfaceOutputStandard
 from ..utils.light_transport import prefilter_env_map, pre_integral_env_brdf, irradiance_integral_env_map, fresnel_schlick_roughness
+
+
+@dataclass
+class SurfaceDeferredRenderSessionOptions:
+    max_layers: int = 0
+    intepolator_impl: Literal['full_screen', 'stencil_masked'] = 'stencil_masked'
+    ibl_specular_samples: int = 1024
+
+    def __post_init__(self):
+        if self.max_layers <= 0:
+            self.max_layers = 16383
 
 
 class SurfaceDeferredRenderSession:
@@ -19,17 +32,17 @@ class SurfaceDeferredRenderSession:
         scene: Scene,
         camera: Camera,
         opaque_only: bool = True,
-        max_layers: int = 0
+        options: Optional[SurfaceDeferredRenderSessionOptions] = None
     ) -> None:
         self.ctx = ctx
         self.scene = scene
         self.camera = camera
         self.opaque_only = opaque_only
-        if max_layers <= 0:
-            max_layers = 16383
+        if options is None:
+            options = SurfaceDeferredRenderSessionOptions()
         if opaque_only:
-            max_layers = 1
-        self.max_layers = max_layers
+            options.max_layers = 1
+        self.options = options
 
     def _checked_cat(self, attrs: List[torch.Tensor], verts_ref: List[torch.Tensor], expected_dim):
         for v, a in zip(verts_ref, attrs):
@@ -95,9 +108,9 @@ class SurfaceDeferredRenderSession:
         r_layers: List[torch.Tensor] = []
         rng = torch.tensor([[0, len(vao.tris)]], dtype=torch.int32)
         with dr.DepthPeeler(self.ctx, clip_space, vao.tris.contiguous(), (h, w), rng) as dp:
-            for i in range(self.max_layers):
+            for i in range(self.options.max_layers):
                 rast, rast_db = dp.rasterize_next_layer()
-                if (i < self.max_layers - 1) and (rast.a <= 0).all():
+                if (i < self.options.max_layers - 1) and (rast.a <= 0).all():
                     break
                 r_layers.append(rast)
         return r_layers
@@ -110,9 +123,17 @@ class SurfaceDeferredRenderSession:
         cam = self.camera
         for rast in r_layers:
             mats = []
-            for x in self.scene.objects:
+            if self.options.intepolator_impl == 'stencil_masked':
+                stencil_buf = vao.stencils[rast.a.int().squeeze(-1)]
+            for pi, x in enumerate(self.scene.objects):
                 su = SurfaceUniform(x.M, cam.V(), cam.P())
-                si = SurfaceInput(su, vao, Interpolator(rast, vao.tris))
+                if self.options.intepolator_impl == 'full_screen':
+                    si = SurfaceInput(su, vao, FullScreenInterpolator(rast, vao.tris))
+                elif self.options.intepolator_impl == 'stencil_masked':
+                    si = SurfaceInput(su, vao, MaskedSparseInterpolator(rast, vao.tris, stencil_buf == pi + 1))
+                    if len(si.interpolator.indices[0]) == 0:
+                        mats.append((si, SurfaceOutputStandard()))
+                        continue
                 so = x.material.shade(su, si)
                 mats.append((si, so))
             m_layers.append(mats)
@@ -127,17 +148,35 @@ class SurfaceDeferredRenderSession:
         h, w = self.camera.resolution()
         gbuffers = []
         for rast, mats in zip(self.rasterize(), self.layer_material()):
-            buffer = [gpu_f32(default).expand(1, h, w, len(default))]
-            stencil_lookup = [0]
-            for si, so in mats:
-                op = operator(si, so)
-                if op is None:
-                    stencil_lookup.append(0)
-                else:
-                    stencil_lookup.append(len(buffer))
-                    buffer.append(op)
-            stencil_lookup = vao.stencils.new_tensor(stencil_lookup)
-            gbuffers.append(torch.gather(torch.cat(buffer), 0, stencil_lookup[vao.stencils][rast.a.int()].repeat_interleave(len(default), dim=-1).long()))
+            if self.options.intepolator_impl == 'full_screen':
+                buffer = [gpu_f32(default).expand(1, h, w, len(default))]
+                stencil_lookup = [0]
+                for si, so in mats:
+                    op = operator(si, so)
+                    if op is None:
+                        stencil_lookup.append(0)
+                    else:
+                        stencil_lookup.append(len(buffer))
+                        buffer.append(op)
+                stencil_lookup = vao.stencils.new_tensor(stencil_lookup)
+                gbuffers.append(torch.gather(torch.cat(buffer), 0, stencil_lookup[vao.stencils][rast.a.int()].repeat_interleave(len(default), dim=-1).long()))
+            elif self.options.intepolator_impl == 'stencil_masked':
+                buffer = gpu_f32(default).expand(1, h, w, len(default))
+                indices = []
+                values = []
+                nind = 0
+                for si, so in mats:
+                    op = operator(si, so)
+                    interpolator: MaskedSparseInterpolator = si.interpolator
+                    if op is not None:
+                        nind = len(interpolator.indices)
+                        indices.append(interpolator.indices)
+                        values.append(op)
+                if nind != 0:
+                    indices = tuple(torch.cat([x[i] for x in indices]) for i in range(nind))
+                    values = torch.cat(values)
+                    buffer = buffer.index_put(indices, values)
+                gbuffers.append(buffer)
         return gbuffers
 
     def compose_layers(
@@ -161,7 +200,7 @@ class SurfaceDeferredRenderSession:
         if self.opaque_only:
             return self.gbuffer_collect(lambda x, y: ones_like_vec(x.interpolator.vi_data, 1), [0.])
         else:
-            return self.gbuffer_collect(lambda x, y: y.alpha, [0.])
+            return self.gbuffer_collect(lambda x, y: y.alpha if y.alpha is not None else ones_like_vec(x.interpolator.vi_data, 1), [0.])
 
     @cached
     def albedo_layered(self):
@@ -171,13 +210,18 @@ class SurfaceDeferredRenderSession:
     def emission_layered(self):
         return self.gbuffer_collect(lambda x, y: y.emission, [0.0, 0.0, 0.0])
 
+    def collector_mso(self, si: SurfaceInput, so: SurfaceOutputStandard):
+        if so.metallic is None and so.smoothness is None and so.occlusion is None:
+            return None
+        return float3(
+            so.metallic if so.metallic is not None else 0.0,
+            so.smoothness if so.smoothness is not None else 0.5,
+            so.occlusion if so.occlusion is not None else 1.0
+        )
+
     @cached
     def mso_layered(self):
-        return self.gbuffer_collect(lambda x, y: float3(
-            y.metallic,
-            y.smoothness,
-            y.occlusion
-        ), [0.0, 0.5, 1.0])
+        return self.gbuffer_collect(self.collector_mso, [0.0, 0.5, 1.0])
 
     def collector_world_normal(self, si: SurfaceInput, so: SurfaceOutputStandard):
         if so.normal is None:
