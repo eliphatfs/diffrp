@@ -80,13 +80,23 @@ def sample2d(
 ):
     # bhwc -> bchw
     # texcoords: ..., 2
+    original_shape = texcoords.shape
+    texcoords = texcoords.flatten(0, -2)[None, None]
+    if wrap == "cyclic-reflection":
+        texture2d = texture2d.tile(1, 2, 1)
+        tx = (texcoords.x % 1.0) * 0.5
+        tx = torch.where(tx >= 0.25, tx, tx + 0.5)
+        texcoords = float2(tx, texcoords.y)
+        del tx
+        wrap = "reflection"
+    texcoords = texcoords * 2 - 1
     sampled = F.grid_sample(
         torch.flipud(texture2d)[None].permute(0, 3, 1, 2),
-        texcoords.flatten(0, -2)[None, None] * 2 - 1,
+        texcoords,
         padding_mode=wrap, mode=mode, align_corners=False
     ).squeeze(2).squeeze(0).T
     # bchw -> wc -> ..., c
-    return sampled.reshape(*texcoords.shape[:-1], texture2d.shape[-1]).contiguous()
+    return sampled.reshape(*original_shape[:-1], texture2d.shape[-1]).contiguous()
 
 
 def saturate(x: torch.Tensor):
