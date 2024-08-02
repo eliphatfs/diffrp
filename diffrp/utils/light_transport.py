@@ -2,8 +2,8 @@ import math
 import torch
 import torch.nn.functional as F
 from typing import Optional
-from .coordinates import angles_to_unit_direction, unit_direction_to_latlong_uv
-from .shader_ops import normalized, float2, float3, cross, dot, sample2d, saturate, to_bchw, to_hwc
+from .shader_ops import normalized, float2, float3, cross, dot, sample2d, to_bchw, to_hwc
+from .coordinates import angles_to_unit_direction, unit_direction_to_latlong_uv, latlong_grid
 
 
 @torch.jit.script
@@ -97,8 +97,7 @@ def prefilter_env_map(
         H = H // 2
         W = W // 2
         roughness = i / (num_levels - 1)
-        phi = torch.linspace(math.pi / 2 - (math.pi / 4 / H), -math.pi / 2 + (math.pi / 4 / H), H, dtype=env.dtype, device=env.device)[..., None, None]
-        theta = (torch.arange(W, dtype=env.dtype, device=env.device) + 0.5)[..., None] * (math.tau / W)
+        phi, theta = latlong_grid(H, W, env.dtype, env.device)
         x, y, z = angles_to_unit_direction(theta, phi)
         r = float3(x, y, z)  # h, w, 3
 
@@ -121,3 +120,27 @@ def prefilter_env_map(
         values = torch.einsum('nhwc,nhw->hwc', values, n_dot_L.squeeze(-1))
         levels.append(values / (weights + 1e-4))
     return levels
+
+
+def irradiance_integral_env_map(
+    env: torch.Tensor,
+    premip_resolution: int = 64,
+    base_resolution: int = 16
+):
+    HP, WP = premip_resolution, premip_resolution * 2
+    env = to_hwc(F.interpolate(to_bchw(env), [HP, WP], mode='area'))
+    H, W = base_resolution, base_resolution * 2
+    phi, theta = latlong_grid(H, W, env.dtype, env.device)
+    x, y, z = angles_to_unit_direction(theta, phi)
+    n = float3(x, y, z)[..., None, None, :]  # h, w, 3 -> h, w, 1, 1, 3
+    up = torch.eye(3, dtype=env.dtype, device=env.device)[1].expand_as(n)
+    right = normalized(cross(up, n))
+    up = normalized(cross(n, right)) # h, w, 1, 1, 3
+    sample_phi, sample_theta = latlong_grid(HP, WP, env.dtype, env.device)
+    sample_phi = sample_phi[:HP // 2]
+    x, y, z = angles_to_unit_direction(sample_theta, sample_phi)  # tangent space, hp, wp, 1
+    uv = float2(*unit_direction_to_latlong_uv(x * right + z * up + y * n))  # h, w, hp, wp, 2
+    values = sample2d(env, uv) * torch.cos(sample_phi) * torch.sin(sample_phi)  # h, w, hp, wp, 3
+    # sample_phi: hp, 1, 1
+    values = values.mean([-2, -3])
+    return values
