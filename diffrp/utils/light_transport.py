@@ -2,7 +2,8 @@ import math
 import torch
 import torch.nn.functional as F
 from typing import Optional
-from ..utils.shader_ops import normalized, float2, float3, cross, dot, sample2d, saturate, to_bchw, to_hwc
+from .coordinates import angles_to_unit_direction, unit_direction_to_latlong_uv
+from .shader_ops import normalized, float2, float3, cross, dot, sample2d, saturate, to_bchw, to_hwc
 
 
 @torch.jit.script
@@ -15,8 +16,12 @@ def radical_inverse_van_der_corput(bits: torch.LongTensor):
     return bits.float() * 2.3283064365386963e-10
 
 
-@torch.jit.script
 def hammersley(n: int, deterministic: bool = False, device: Optional[torch.device] = None):
+    return _hammersley_impl(n, deterministic, device)
+
+
+@torch.jit.script
+def _hammersley_impl(n: int, deterministic: bool, device: Optional[torch.device]):
     i = torch.arange(n, dtype=torch.int64, device=device)
     x = i.float() * (1 / n)
     y = radical_inverse_van_der_corput(i)
@@ -32,7 +37,6 @@ def normal_distribution_function_ggx(n_dot_h: torch.Tensor, roughness: float):
     return (a * a / math.pi + 1e-7) / (f * f + 1e-7)
 
 
-@torch.jit.script
 def importance_sample_ggx(x: torch.Tensor, y: torch.Tensor, n: torch.Tensor, roughness: float):
     """
     GGX Importance Sampling.
@@ -50,6 +54,11 @@ def importance_sample_ggx(x: torch.Tensor, y: torch.Tensor, n: torch.Tensor, rou
     Returns:
         torch.Tensor: sampled ray directions, shape (n, ..., 3)
     """
+    return _importance_sample_ggx_impl(x, y, n, roughness)
+
+
+@torch.jit.script
+def _importance_sample_ggx_impl(x: torch.Tensor, y: torch.Tensor, n: torch.Tensor, roughness: float):
     a = roughness * roughness
     phi = math.tau * x
     if roughness < 1e-4:
@@ -60,11 +69,9 @@ def importance_sample_ggx(x: torch.Tensor, y: torch.Tensor, n: torch.Tensor, rou
     hx = torch.cos(phi) * sin_theta
     hy = torch.sin(phi) * sin_theta
     hz = cos_theta
-    up = torch.where(
-        n[..., 1:2] < 0.999,
-        torch.tensor([0, 1, 0], dtype=n.dtype, device=n.device),
-        torch.tensor([1, 0, 0], dtype=n.dtype, device=n.device)
-    )
+    up = torch.eye(3, dtype=n.dtype, device=n.device)[torch.where(
+        n[..., 1] < 0.999, 1, 0
+    )]
     # cannot use .y and .new_tensor shorthands for jit scripted function
     tangent = normalized(cross(up, n))
     bitangent = cross(n, tangent)
@@ -85,29 +92,25 @@ def prefilter_env_map(
     W = H * 2
     env = to_hwc(F.interpolate(to_bchw(env), [H, W], mode='area'))
     levels = [env]
+    rx, ry = hammersley(num_samples, deterministic, env.device)  # n
     for i in range(1, num_levels):
         H = H // 2
         W = W // 2
         roughness = i / (num_levels - 1)
-        phi = torch.linspace(math.pi / 2 - (math.pi / 4 / H), -math.pi / 2 + (math.pi / 4 / H), H, dtype=env.dtype, device=env.device)[..., None]
-        theta = torch.arange(W, dtype=env.dtype, device=env.device) * (math.tau / W)
-        z = torch.cos(theta) * torch.cos(phi)
-        x = torch.sin(theta) * torch.cos(phi)
-        y = torch.sin(phi)
-        r = float3(x.unsqueeze(-1), y.unsqueeze(-1), z.unsqueeze(-1))  # h, w, 3
+        phi = torch.linspace(math.pi / 2 - (math.pi / 4 / H), -math.pi / 2 + (math.pi / 4 / H), H, dtype=env.dtype, device=env.device)[..., None, None]
+        theta = (torch.arange(W, dtype=env.dtype, device=env.device) + 0.5)[..., None] * (math.tau / W)
+        x, y, z = angles_to_unit_direction(theta, phi)
+        r = float3(x, y, z)  # h, w, 3
 
         n = v = r
-        x, y = hammersley(num_samples, deterministic, env.device)  # n
-        h = importance_sample_ggx(x, y, n, roughness)  # n, h, w, 3
+        h = importance_sample_ggx(rx, ry, n, roughness)  # n, h, w, 3
 
         L = normalized(2.0 * dot(v, h) * h - v)  # broadcast, n, h, w, 3
         del h
-        n_dot_L = saturate(dot(n, L))  # n, h, w, 1
+        n_dot_L = torch.relu_(dot(n, L))  # n, h, w, 1
 
-        u = torch.atan2(L.x, L.z) * (0.5 / math.pi)
-        v = torch.asin(torch.clamp(L.y, -1, 1)) / math.pi + 0.5
+        u, v = unit_direction_to_latlong_uv(L)
         del L
-        u = u % 1
 
         uv = float2(u, v)
         del u, v
