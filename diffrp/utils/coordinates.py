@@ -2,6 +2,12 @@ import math
 import torch
 
 
+def latlong_grid(H, W, dtype, device):
+    phi = torch.linspace(math.pi / 2 - (math.pi / 4 / H), -math.pi / 2 + (math.pi / 4 / H), H, dtype=dtype, device=device)[..., None, None]
+    theta = (torch.arange(W, dtype=dtype, device=device) + 0.5)[..., None] * (math.tau / W)
+    return phi, theta
+
+
 def angles_to_unit_direction(theta: torch.Tensor, phi: torch.Tensor):
     return _angles_to_unit_direction_impl(theta, phi)
 
