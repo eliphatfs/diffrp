@@ -341,7 +341,7 @@ class SurfaceDeferredRenderSession:
         pre_lod = (len(pre_levels) - 1) * saturate(1 - mso.y)
         pre_fetch = 0
         for i, level in enumerate(pre_levels):
-            pre_level = sample2d(level, r_uv, 'cyclic-reflection', 'bicubic')
+            pre_level = torch.relu(sample2d(level, r_uv, 'cyclic-reflection', 'bicubic'))
             pre_weight = torch.relu(1 - torch.abs(pre_lod - i))
             pre_fetch = pre_fetch + pre_level * pre_weight
 
