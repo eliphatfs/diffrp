@@ -104,6 +104,33 @@ def sample2d(
     return sampled.reshape(*original_shape[:-1], texture2d.shape[-1]).contiguous()
 
 
+def sample3d(
+    texture3d: torch.Tensor,
+    texcoords: torch.Tensor,
+    wrap: str = "border",
+    mode: str = "bilinear"
+):
+    # bdhwc -> bcdhw
+    # texcoords: ..., 2
+    original_shape = texcoords.shape
+    texcoords = texcoords.flatten(0, -2)[None, None, None]
+    if wrap == "cyclic-reflection":
+        texture3d = texture3d.tile(1, 1, 2, 1)
+        tx = (texcoords.x % 1.0) * 0.5
+        tx = torch.where(tx >= 0.25, tx, tx + 0.5)
+        texcoords = float3(tx, texcoords.y, texcoords.z)
+        del tx
+        wrap = "reflection"
+    texcoords = texcoords * 2 - 1
+    sampled = F.grid_sample(
+        torch.fliplr(texture3d)[None].permute(0, 4, 1, 2, 3),
+        texcoords,
+        padding_mode=wrap, mode=mode, align_corners=False
+    ).squeeze(3).squeeze(2).squeeze(0).T
+    # bcdhw -> wc -> ..., c
+    return sampled.reshape(*original_shape[:-1], texture3d.shape[-1]).contiguous()
+
+
 def reflect(i: torch.Tensor, n: torch.Tensor):
     return i - 2.0 * dot(n, i) * n
 
