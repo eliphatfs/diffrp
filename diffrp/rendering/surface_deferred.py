@@ -399,3 +399,9 @@ class SurfaceDeferredRenderSession:
             )
         else:
             return self.compose_layers(self.pbr_layered())
+
+    def nvdr_antialias(self, rgb: torch.Tensor):
+        rgb = torch.flipud(rgb)[None].contiguous()
+        rast = self.rasterize()[0].contiguous()
+        vao = self.vertex_array_object()
+        return torch.flipud(dr.antialias(rgb, rast, self.clip_space(), vao.tris.contiguous()).squeeze(0))
