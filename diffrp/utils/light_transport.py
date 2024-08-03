@@ -3,7 +3,7 @@ import torch
 import torch.nn.functional as F
 from typing import Optional
 from .cache import singleton_cached
-from .shader_ops import normalized, float2, float3, cross, dot, sample2d, to_bchw, to_hwc, saturate
+from .shader_ops import normalized, float2, float3, cross, dot, sample2d, to_bchw, to_hwc, saturate, sample3d
 from .coordinates import angles_to_unit_direction, unit_direction_to_latlong_uv, latlong_grid
 
 
@@ -92,6 +92,14 @@ def prefilter_env_map(
     H = base_resolution
     W = H * 2
     env = to_hwc(F.interpolate(to_bchw(env), [H, W], mode='area'))
+    pre_mips = [env]
+    while H > 4:
+        H = H // 2
+        W = W // 2
+        pre_mips.append(to_hwc(F.interpolate(to_bchw(pre_mips[-1]), [H, W], mode='area')))
+    H = base_resolution
+    W = H * 2
+    pre_mips = torch.stack([to_hwc(F.interpolate(to_bchw(mip), [H, W], mode='bilinear')) for mip in pre_mips])
     levels = [env]
     rx, ry = hammersley(num_samples, deterministic, env.device)  # n
     for i in range(1, num_levels):
@@ -105,6 +113,12 @@ def prefilter_env_map(
         n = v = r
         h = importance_sample_ggx(rx, ry, n, roughness)  # n, h, w, 3
 
+        ggx_d = normal_distribution_function_ggx(dot(n, h), roughness)  # n, h, w, 1
+        satexel = math.pi / (2.0 * base_resolution * base_resolution)
+        sasample = 1.0 / (num_samples * (ggx_d + 0.0004) + 0.0001)
+        mip_level = saturate((0.5 * torch.log2(sasample / satexel)) / (len(pre_mips) - 1))
+        del ggx_d, sasample
+
         L = normalized(2.0 * dot(v, h) * h - v)  # broadcast, n, h, w, 3
         del h
         n_dot_L = torch.relu_(dot(n, L))  # n, h, w, 1
@@ -112,9 +126,9 @@ def prefilter_env_map(
         u, v = unit_direction_to_latlong_uv(L)
         del L
 
-        uv = float2(u, v)
-        del u, v
-        values = sample2d(env, uv, "reflection")  # n, h, w, c
+        uv = float3(u, v, mip_level)
+        del u, v, mip_level
+        values = sample3d(pre_mips, uv, "reflection")  # n, h, w, c
         del uv
         weights = n_dot_L.sum(0)
 
