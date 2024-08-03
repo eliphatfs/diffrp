@@ -8,7 +8,7 @@ from .shader_ops import normalized, float2, float3, cross, dot, sample2d, to_bch
 
 
 @torch.jit.script
-def radical_inverse_van_der_corput(bits: torch.LongTensor):
+def radical_inverse_van_der_corput(bits: torch.Tensor):
     bits = (bits << 16) | (bits >> 16)
     bits = ((bits & 0x55555555) << 1) | ((bits & 0xAAAAAAAA) >> 1)
     bits = ((bits & 0x33333333) << 2) | ((bits & 0xCCCCCCCC) >> 2)
