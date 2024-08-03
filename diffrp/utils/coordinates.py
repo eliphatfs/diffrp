@@ -3,8 +3,8 @@ import torch
 
 
 def latlong_grid(H, W, dtype, device):
-    phi = torch.linspace(math.pi / 2 - (math.pi / 4 / H), -math.pi / 2 + (math.pi / 4 / H), H, dtype=dtype, device=device)[..., None, None]
-    theta = (torch.arange(W, dtype=dtype, device=device) + 0.5)[..., None] * (math.tau / W)
+    phi = torch.linspace(math.pi / 2, -math.pi / 2, H, dtype=dtype, device=device)[..., None, None]
+    theta = (torch.arange(W, dtype=dtype, device=device))[..., None] * (math.tau / (W - 1))
     return phi, theta
 
 

@@ -35,7 +35,7 @@ def _hammersley_impl(n: int, deterministic: bool, device: Optional[torch.device]
 def normal_distribution_function_ggx(n_dot_h: torch.Tensor, roughness: float):
     a = roughness * roughness
     f = n_dot_h * n_dot_h * (a * a - 1) + 1
-    return (a * a / math.pi + 1e-7) / (f * f + 1e-7)
+    return (a * a / math.pi) / (f * f)
 
 
 def importance_sample_ggx(x: torch.Tensor, y: torch.Tensor, n: torch.Tensor, roughness: float):
@@ -81,19 +81,19 @@ def _importance_sample_ggx_impl(x: torch.Tensor, y: torch.Tensor, n: torch.Tenso
     h_broadcast = [-1] + [1] * n.ndim
     hx, hy, hz = [m.reshape(h_broadcast) for m in [hx, hy, hz]]
     sample_vec = tangent * hx + bitangent * hy + n * hz
-    return normalized(sample_vec)
+    return sample_vec
 
 
 def prefilter_env_map(
     env: torch.Tensor,
-    base_resolution: int = 128, num_levels: int = 5,
-    num_samples: int = 1024, deterministic: bool = False
+    base_resolution: int = 256, num_levels: int = 5,
+    num_samples: int = 512, deterministic: bool = False
 ):
     H = base_resolution
     W = H * 2
     env = to_hwc(F.interpolate(to_bchw(env), [H, W], mode='area'))
     pre_mips = [env]
-    while H > 4:
+    while H > 8:
         H = H // 2
         W = W // 2
         pre_mips.append(to_hwc(F.interpolate(to_bchw(pre_mips[-1]), [H, W], mode='area')))
@@ -112,19 +112,19 @@ def prefilter_env_map(
 
         n = v = r
         h = importance_sample_ggx(rx, ry, n, roughness)  # n, h, w, 3
-
         ggx_d = normal_distribution_function_ggx(dot(n, h), roughness)  # n, h, w, 1
-        satexel = math.pi / (2.0 * base_resolution * base_resolution)
-        sasample = 1.0 / (num_samples * (ggx_d + 0.0004) + 0.0001)
-        mip_level = saturate((0.5 * torch.log2(sasample / satexel)) / (len(pre_mips) - 1))
-        del ggx_d, sasample
 
         L = normalized(2.0 * dot(v, h) * h - v)  # broadcast, n, h, w, 3
         del h
         n_dot_L = torch.relu_(dot(n, L))  # n, h, w, 1
 
         u, v = unit_direction_to_latlong_uv(L)
-        del L
+        satexel_inv = (2.0 * base_resolution * base_resolution) / math.pi
+        sasample = (satexel_inv / num_samples) / (torch.clamp_min(1 - L.y ** 2, math.cos(math.pi / 2 - math.pi / 2 / H) ** 2) * (ggx_d + 0.0004))
+        del ggx_d, L
+
+        mip_level = saturate(0.5 / (len(pre_mips) - 1) * torch.log2(sasample))
+        del sasample
 
         uv = float3(u, v, mip_level)
         del u, v, mip_level
@@ -151,8 +151,8 @@ def irradiance_integral_env_map(
     up = torch.eye(3, dtype=env.dtype, device=env.device)[1].expand_as(n)
     right = normalized(cross(up, n))
     up = normalized(cross(n, right)) # h, w, 1, 1, 3
-    sample_phi, sample_theta = latlong_grid(HP, WP, env.dtype, env.device)
-    sample_phi = sample_phi[:HP // 2]
+    sample_phi, sample_theta = latlong_grid(HP * 2, WP * 2, env.dtype, env.device)
+    sample_phi = sample_phi[:len(sample_phi) // 2]
     x, y, z = angles_to_unit_direction(sample_theta, sample_phi)  # tangent space, hp, wp, 1
     uv = float2(*unit_direction_to_latlong_uv(x * right + z * up + y * n))  # h, w, hp, wp, 2
     values = sample2d(env, uv) * torch.cos(sample_phi) * torch.sin(sample_phi)  # h, w, hp, wp, 3

@@ -341,12 +341,12 @@ class SurfaceDeferredRenderSession:
         pre_lod = (len(pre_levels) - 1) * saturate(1 - mso.y)
         pre_fetch = 0
         for i, level in enumerate(pre_levels):
-            pre_level = torch.relu(sample2d(level, r_uv, 'cyclic-reflection', 'bicubic'))
+            pre_level = torch.relu(sample2d(level, r_uv, 'latlong'))
             pre_weight = torch.relu(1 - torch.abs(pre_lod - i))
             pre_fetch = pre_fetch + pre_level * pre_weight
 
         brdf = sample2d(env_brdf, float2(n_dot_v, mso.y))
-        irradiance_fetch = sample2d(irradiance, n_uv, 'cyclic-reflection', 'bicubic')
+        irradiance_fetch = sample2d(irradiance, n_uv, 'latlong')
 
         f0 = 0.04 * (1.0 - mso.x) + albedo * mso.x
         f = fresnel_schlick_roughness(n_dot_v, f0, 1 - mso.y)
