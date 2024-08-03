@@ -1,5 +1,12 @@
 import math
 import torch
+from .shader_ops import float3
+
+
+def near_plane_ndc_grid(H, W, dtype, device):
+    y = (torch.arange(H, dtype=dtype, device=device) + 0.5)[..., None, None] * (2 / H) - 1
+    x = (torch.arange(W, dtype=dtype, device=device) + 0.5)[..., None] * (2 / W) - 1
+    return float3(x, y, -1)
 
 
 def latlong_grid(H, W, dtype, device):

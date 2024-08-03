@@ -8,7 +8,7 @@ from ..utils.cache import cached
 from ..utils.shader_ops import *
 from ..utils.composite import alpha_blend
 from ..scene import Scene, ImageEnvironmentLight
-from ..utils.coordinates import unit_direction_to_latlong_uv
+from ..utils.coordinates import unit_direction_to_latlong_uv, near_plane_ndc_grid
 from .interpolator import FullScreenInterpolator, MaskedSparseInterpolator
 from ..materials.base_material import VertexArrayObject, SurfaceInput, SurfaceUniform, SurfaceOutputStandard
 from ..utils.light_transport import prefilter_env_map, pre_integral_env_brdf, irradiance_integral_env_map, fresnel_schlick_roughness
@@ -267,8 +267,14 @@ class SurfaceDeferredRenderSession:
         return self.gbuffer_collect(lambda x, y: x.local_pos, [0., 0., 0.])
 
     @cached
-    def view_dir_layered(self):
-        return self.gbuffer_collect(lambda x, y: x.view_dir, [0., 0., -1.])
+    def view_dir(self):
+        grid = near_plane_ndc_grid(*self.camera.resolution(), torch.float32, 'cuda')
+        grid = transform_point(grid, torch.linalg.inv(self.camera.P()))
+        grid = grid.xyz / grid.w
+        camera_matrix = torch.linalg.inv(self.camera.V())
+        grid = transform_point(grid, camera_matrix)
+        grid = grid.xyz / grid.w
+        return normalized(grid - camera_matrix[:3, 3])
 
     @cached
     def albedo(self):
@@ -371,10 +377,9 @@ class SurfaceDeferredRenderSession:
     @cached
     def pbr_layered(self):
         return [
-            self.pbr_layer(world_normal, view_dir, mso, albedo)
-            for world_normal, view_dir, mso, albedo in zip(
+            self.pbr_layer(world_normal, self.view_dir(), mso, albedo)
+            for world_normal, mso, albedo in zip(
                 self.world_space_normal_layered(),
-                self.view_dir_layered(),
                 self.mso_layered(),
                 self.albedo_layered()
             )
