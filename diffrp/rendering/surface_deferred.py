@@ -336,8 +336,9 @@ class SurfaceDeferredRenderSession:
         albedo: torch.Tensor
     ):
         env_brdf = pre_integral_env_brdf()
-        pre_levels = prefilter_env_map(light.image, deterministic=True)
-        irradiance = irradiance_integral_env_map(light.image)
+        image_rh = light.image_rh()
+        pre_levels = prefilter_env_map(image_rh, deterministic=True)
+        irradiance = irradiance_integral_env_map(image_rh)
 
         n_dot_v = torch.relu(dot(world_normal, -view_dir))
         r = reflect(view_dir, world_normal)
@@ -387,9 +388,16 @@ class SurfaceDeferredRenderSession:
 
     @cached
     def pbr(self):
-        # skybox = []
-        # skybox_alpha = []
-        # for light in self.scene.lights:
-        #     if isinstance(light, ImageEnvironmentLight) and light.render_skybox:
-        #         skybox.append(sample2d(light.image, ))
-        return self.compose_layers(self.pbr_layered())
+        skybox = 0
+        w = 0
+        for light in self.scene.lights:
+            if isinstance(light, ImageEnvironmentLight) and light.render_skybox:
+                skybox = skybox + sample2d(light.image_rh(), float2(*unit_direction_to_latlong_uv(self.view_dir())))
+                w += 1
+        if w != 0:
+            return self.compose_layers(
+                self.pbr_layered() + [skybox / w],
+                self.alpha_layered() + [torch.ones_like(skybox)]
+            )
+        else:
+            return self.compose_layers(self.pbr_layered())
