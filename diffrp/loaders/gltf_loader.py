@@ -2,10 +2,9 @@ import numpy
 import torch
 import logging
 import trimesh
-from trimesh.visual import ColorVisuals, TextureVisuals
+from typing import List
 from trimesh.visual.material import PBRMaterial
-from dataclasses import dataclass
-from typing import List, Optional
+from trimesh.visual import ColorVisuals, TextureVisuals
 
 from ..utils import colors
 from ..utils.shader_ops import *
@@ -13,18 +12,6 @@ from ..plugins import mikktspace
 from ..scene import Scene, MeshObject
 from ..rendering.camera import PerspectiveCamera
 from ..materials.gltf_material import GLTFMaterial, GLTFSampler
-
-
-@dataclass
-class GLTFMeshPrimitive:
-    material: GLTFMaterial
-    verts: torch.Tensor
-    tris: torch.IntTensor
-    normals: torch.Tensor
-    uv: torch.Tensor
-    color: torch.Tensor
-    transform: torch.Tensor
-    tangents: Optional[torch.Tensor] = None
 
 
 def force_rgba(color: torch.Tensor):

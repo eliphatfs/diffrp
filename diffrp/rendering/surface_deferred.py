@@ -3,13 +3,14 @@ import nvdiffrast.torch as dr
 from dataclasses import dataclass
 from typing_extensions import Literal
 from typing import Union, List, Tuple, Callable, Optional
+
 from .camera import Camera
 from ..utils.cache import cached
 from ..utils.shader_ops import *
 from ..utils.composite import alpha_blend
 from ..scene import Scene, ImageEnvironmentLight
-from ..utils.coordinates import unit_direction_to_latlong_uv, near_plane_ndc_grid
 from .interpolator import FullScreenInterpolator, MaskedSparseInterpolator
+from ..utils.coordinates import unit_direction_to_latlong_uv, near_plane_ndc_grid
 from ..materials.base_material import VertexArrayObject, SurfaceInput, SurfaceUniform, SurfaceOutputStandard
 from ..utils.light_transport import prefilter_env_map, pre_integral_env_brdf, irradiance_integral_env_map, fresnel_schlick_roughness
 
