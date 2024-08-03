@@ -389,15 +389,13 @@ class SurfaceDeferredRenderSession:
     @cached
     def pbr(self):
         skybox = 0
-        w = 0
         for light in self.scene.lights:
             if isinstance(light, ImageEnvironmentLight) and light.render_skybox:
                 skybox = skybox + sample2d(light.image_rh(), float2(*unit_direction_to_latlong_uv(self.view_dir())))
-                w += 1
-        if w != 0:
+        if skybox is not 0:
             return self.compose_layers(
-                self.pbr_layered() + [skybox / w],
-                self.alpha_layered() + [torch.ones_like(skybox)]
+                self.pbr_layered() + [skybox],
+                self.alpha_layered() + [ones_like_vec(skybox, 1)]
             )
         else:
             return self.compose_layers(self.pbr_layered())

@@ -22,3 +22,7 @@ class PointLight(Light):
 @dataclass
 class ImageEnvironmentLight(Light):
     image: torch.Tensor
+    render_skybox: bool = True
+
+    def image_rh(self):
+        return torch.fliplr(self.image) * (self.intensity * self.color)
