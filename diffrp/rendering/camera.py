@@ -46,6 +46,9 @@ class PerspectiveCamera(Camera):
     def resolution(self):
         return self.h, self.w
 
+    def set_transform(self, tr: numpy.ndarray):
+        self.t = tr
+
     def lookat(self, point: Union[List[int], numpy.ndarray]):
         if isinstance(point, list):
             point = numpy.array(point)
