@@ -1,3 +1,8 @@
+"""
+Includes various kind of utilities.
+The APIs in the subpackages are also directly available from this `diffrp.utils` package.
+"""
+
 from .cache import *
 from .colors import *
 from .composite import *
