@@ -70,7 +70,17 @@ The GPU buffers can be replaced by arbitrary tensors or parameters, and the proc
 The `SurfaceDeferredRenderSession` is a "session", which means you have to recreate it when you want to change the scene and/or the camera to avoid out-dated cached data.
 ```
 
+### Next Steps
+
+It is recommended to go through the glTF rendering tutorial even if you do not need the functionality. It helps learning basic graphics concepts in DiffRP.
+
+```{toctree}
+:maxdepth: 1
+gltf
+```
+
 ## API Reference
+
 ```{toctree}
 :maxdepth: 3
 generated/diffrp
