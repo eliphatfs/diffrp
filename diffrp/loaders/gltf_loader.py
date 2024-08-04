@@ -79,6 +79,19 @@ def to_gltf_material(verts: torch.Tensor, visual):
 
 
 def load_gltf_scene(path, compute_tangents=False) -> Scene:
+    """
+    Load a glb file as a DiffRP Scene.
+    
+    Args:
+        path (str): path to the ``.glb`` file.
+        compute_tangents (bool):
+            If set, tangents will be computed according to the *MikkTSpace* algorithm.
+            Execution of the algorithm requires ``gcc`` in the path.
+            Defaults to ``False``.
+        
+    Returns:
+        The loaded scene.
+    """
     drp_scene = Scene()
 
     scene: trimesh.Scene = trimesh.load(path, force='scene', process=False)

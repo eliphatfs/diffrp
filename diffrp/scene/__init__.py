@@ -1,6 +1,6 @@
 """
 Includes the scene description components.
-The APIs in the subpackages are also directly available from this `diffrp.scene` package.
+The APIs in the subpackages are also directly available from this ``diffrp.scene`` package.
 """
 
 from .scene import Scene

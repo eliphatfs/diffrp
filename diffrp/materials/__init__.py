@@ -1,6 +1,6 @@
 """
 Includes the interface and built-in implementations of materials.
-The APIs in the subpackages are also directly available from this `diffrp.materials` package.
+The APIs in the subpackages are also directly available from this ``diffrp.materials`` package.
 """
 
 

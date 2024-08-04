@@ -4,6 +4,16 @@ from .base_material import SurfaceInput, SurfaceMaterial, SurfaceUniform, Surfac
 
 
 class DefaultMaterial(SurfaceMaterial):
+    """
+    Default material.
+
+    Outputs the interpolated vertex color attributes combined with an optional tint as the albedo,
+    and other attributes remain the default.
+
+    Args:
+        tint(Optional[torch.Tensor]): Linear multipliers for colors. Defaults to ``None``.
+    """
+
     def __init__(self, tint: Optional[torch.Tensor] = None) -> None:
         super().__init__()
         self.tint = tint

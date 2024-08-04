@@ -11,6 +11,11 @@ from ..utils.shader_ops import float4, normalized, transform_point4x3, transform
 
 @dataclass
 class VertexArrayObject:
+    """
+    Vertex Array Object. Includes vertex and index buffers of the scene.
+
+    Created automatically by render pipelines.
+    """
     # geometry
     verts: torch.Tensor
     normals: torch.Tensor
@@ -31,6 +36,17 @@ class VertexArrayObject:
 
 @dataclass
 class SurfaceUniform:
+    """
+    Users can access the system surface uniforms from this class.
+
+    Uniform means the same value or data accessed across a material.
+    Extra custom uniforms like textures and other attributes should be put in fields of the materials.
+
+    Args:
+        M (torch.Tensor): The Model matrix. Tensor of shape (4, 4).
+        V (torch.Tensor): The View matrix in OpenGL convention. Tensor of shape (4, 4).
+        P (torch.Tensor): The Projection matrix in OpenGL convention. Tensor of shape (4, 4).
+    """
     M: torch.Tensor
     V: torch.Tensor
     P: torch.Tensor
@@ -38,15 +54,33 @@ class SurfaceUniform:
     @property
     @cached
     def camera_matrix(self):
+        """
+        Access the camera matrix, or pose transform, in OpenGL convention.
+        Camera right, up, forward is X, Y, -Z, respectively.
+        This is the inverse of the View matrix ``V``.
+
+        Returns:
+            torch.Tensor: The camera matrix, commonly referred to as ``c2w``. Tensor of shape (4, 4).
+        """
         return torch.linalg.inv(self.V)
 
     @property
     @cached
     def camera_position(self):
+        """
+        Access the position of the camera.
+
+        Returns:
+            torch.Tensor: The camera position vector XYZ. Tensor of shape (3,).
+        """
         return self.camera_matrix[:3, 3]
 
 
 class SurfaceInput:
+    """
+    Users can access system and custom attributes of the fragments currently processing
+    from the ``shade`` function from this class.
+    """
 
     def __init__(self, uniforms: SurfaceUniform, vertex_buffers: VertexArrayObject, interpolator: Interpolator):
         self.cache = {}
@@ -57,9 +91,46 @@ class SurfaceInput:
 
     def interpolate_ex(
         self,
-        vertex_buffer: Optional[torch.Tensor],
+        vertex_buffer: torch.Tensor,
         world_transform: Literal['none', 'vector', 'vectornor', 'point', 'vector3ex1', 'vector3norex1'] = 'none',
     ):
+        """
+        Use this method to interpolate arbitrary vertex attributes into fragments queried in the ``shade`` method.
+
+        Args:
+            vertex_buffer (torch.Tensor): The vertex attributes to be interpolated. Tensor of shape (V, C).
+            world_transform (str):
+                | One of 'none', 'vector', 'vectornor', 'point', 'vector3ex1' or 'vector3norex1'.
+                | **'none'**: Interpolate the vertex attributes as-is.
+                | **'vector'**:
+                    Requires ``C = 3``.
+                    Transforms as direction vectors attributed with vertices into world space before interpolating.
+                | **'vectornor'**:
+                    Requires ``C = 3``.
+                    Transforms as direction vectors attributed with vertices into world space
+                    and normalize before interpolating.
+                    They are **NOT** normalized again after interpolation.
+                | **'point'**:
+                    Requires ``C = 3``.
+                    Transforms as positions or points attributed with vertices
+                    into world space before interpolating.
+                | **'vector3ex1'**:
+                    Requires ``C = 4``.
+                    Transforms the first 3 channels as direction vectors attributed with vertices
+                    into world space before interpolating.
+                    The fourth channel is interpolated as-is.
+                | **'vector3norex1'**:
+                    Requires ``C = 4``.
+                    Transforms the first 3 channels as direction vectors attributed with vertices
+                    into world space and normalize before interpolating.
+                    They are **NOT** normalized again after interpolation.
+                    The fourth channel is interpolated as-is.
+        
+        Returns:
+            torch.Tensor:
+                Tensor of shape (..., C) where ... is batched pixels, can be 1D or 2D according to interpolator flags.
+                C is the number of channels in the vertex attribute you input in ``vertex_buffer``.
+        """
         if world_transform == 'point':
             vertex_buffer = transform_point4x3(vertex_buffer, self.uniforms.M)
         elif world_transform == 'vector':
@@ -75,57 +146,142 @@ class SurfaceInput:
     @property
     @cached
     def view_dir(self) -> torch.Tensor:
-        # F3, view direction (normalized)
+        """
+        View directions.
+        The normalized unit vectors looking from the camera to the world position of the fragments.
+
+        Returns:
+            torch.Tensor:
+                Tensor of shape (..., 3) where ... is batched pixels, can be 1D or 2D according to interpolator flags.
+        """
         return normalized(self.world_pos - self.uniforms.camera_position)
 
     @property
     @cached
     def world_pos(self) -> torch.Tensor:
-        # F3, world position
+        """
+        The world position of the fragments.
+
+        Returns:
+            torch.Tensor:
+                Tensor of shape (..., 3) where ... is batched pixels, can be 1D or 2D according to interpolator flags.
+        """
         return self.interpolate_ex(self.vertex_buffers.world_pos)
 
     @property
     @cached
     def local_pos(self) -> torch.Tensor:
-        # F3, world position
+        """
+        The local (object space) position of the fragments.
+
+        Returns:
+            torch.Tensor:
+                Tensor of shape (..., 3) where ... is batched pixels, can be 1D or 2D according to interpolator flags.
+        """
         return self.interpolate_ex(self.vertex_buffers.verts)
 
     @property
     @cached
     def world_normal_unnormalized(self) -> torch.Tensor:
-        # F3, geometry world normal, normalized at vertex level
+        """
+        The geometry world normal of the fragments.
+        This includes the effect of smooth (vertex interpolation) and flat face specification in the ``MeshObject``.
+
+        Normals are normalized in vertices, but not again after interpolation.
+        Thus, this is slightly off from unit vectors, but may be useful in e.g. tangent space calculations.
+
+        Returns:
+            torch.Tensor:
+                Tensor of shape (..., 3) where ... is batched pixels, can be 1D or 2D according to interpolator flags.
+        """
         return self.interpolate_ex(self.vertex_buffers.normals, 'vectornor')
 
     @property
     @cached
     def world_normal(self) -> torch.Tensor:
-        # F3, geometry world normal (normalized)
+        """
+        The normalized unit vectors for geometry world normal of the fragments.
+        This includes the effect of smooth (vertex interpolation) and flat face specification in the ``MeshObject``.
+
+        Returns:
+            torch.Tensor:
+                Tensor of shape (..., 3) where ... is batched pixels, can be 1D or 2D according to interpolator flags.
+        """
         return normalized(self.world_normal_unnormalized)
 
     @property
     @cached
     def color(self) -> torch.Tensor:
+        """
+        The interpolated color attributes (RGBA) of the fragments.
+        Usually ranges from 0 to 1 (instead of 255).
+
+        Defaults to white (ones) if not specified in the ``MeshObject``.
+
+        Returns:
+            torch.Tensor:
+                Tensor of shape (..., 4) where ... is batched pixels, can be 1D or 2D according to interpolator flags.
+        """
         # F4, vertex color, default to ones
         return self.interpolate_ex(self.vertex_buffers.color)
 
     @property
     @cached
     def uv(self) -> torch.Tensor:
-        # F2, uv, default to zeros
+        """
+        The interpolated UV coordinate attributes of the fragments.
+        (0, 0) is the bottom-left in OpenGL convention, in contrast to top-left in most image libraries.
+
+        Defaults to zeros if not specified in the ``MeshObject``.
+
+        Returns:
+            torch.Tensor:
+                Tensor of shape (..., 2) where ... is batched pixels, can be 1D or 2D according to interpolator flags.
+        """
         return self.interpolate_ex(self.vertex_buffers.uv)
 
     @property
     @cached
     def world_tangent(self) -> torch.Tensor:
-        # F4, tangents, default to zeros
+        """
+        The interpolated tangents in world space of the fragments.
+
+        The xyz dimensions form the tangent vector, while the w dimension specifies the sign (1 or -1).
+
+        Defaults to zeros if not specified in the ``MeshObject``.
+
+        Returns:
+            torch.Tensor:
+                Tensor of shape (..., 4) where ... is batched pixels, can be 1D or 2D according to interpolator flags.
+        """
         return self.interpolate_ex(self.vertex_buffers.tangents, 'vector3norex1')
 
     @property
     def custom_attrs(self) -> Mapping[str, torch.Tensor]:
+        """
+        Dictionary of custom attributes of the fragments.
+
+        The keys are the same as you specified in the ``MeshObject``.
+
+        If some objects provide the custom inputs while others not for the key,
+        you will get zeros for objects where the custom vertex attributes are absent.
+
+        An error will be raised if custom inputs with the same key have different numbers of channels.
+
+        Returns:
+            torch.Tensor:
+                Tensor of shape (..., C) where ... is batched pixels, can be 1D or 2D according to interpolator flags.
+                C is the number of channels in the vertex attribute you input in ``MeshObject``.
+        """
         return self.custom_surface_inputs
 
 
 class CustomSurfaceInputs(Mapping):
+    """
+    Implementation for custom vertex attribute access.
+
+    This is an implementation detail and you do not need to take care of it.
+    """
 
     def __init__(self, si: SurfaceInput) -> None:
         self.si = si
@@ -158,4 +314,16 @@ class SurfaceMaterial(metaclass=abc.ABCMeta):
 
     @abc.abstractmethod
     def shade(self, su: SurfaceUniform, si: SurfaceInput) -> SurfaceOutputStandard:
+        """
+        The interface for implementing materials.
+        It takes a fragment batch specified as ``SurfaceUniform`` and ``SurfaceInput``.
+        
+        You shall not assume any order or shape of the fragment batch.
+        In other words, the method should be trivial on the batch dimension, that is,
+        the method should return batched outputs equivalent to
+        concatenated outputs from the same batch of input but split into multiple sub-batches.
+
+        Most functions implemented with attribute accesses, element/vector-wise operations
+        and DiffRP utility functions naturally have this property.
+        """
         raise NotImplementedError
