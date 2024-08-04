@@ -342,6 +342,9 @@ class SurfaceDeferredRenderSession:
     @cached
     def distance(self):
         return self.compose_layers(self.distance_layered(), return_alpha=False)
+    
+    def aov(self, key: str, bg_value: List[float]):
+        return self.compose_layers(self.gbuffer_collect(lambda x, y: y.aovs and y.aovs.get(key), bg_value))
 
     def ibl(
         self,

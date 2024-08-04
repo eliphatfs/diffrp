@@ -27,7 +27,8 @@ class CameraSpaceVertexNormalMaterial(SurfaceMaterial):
     def shade(self, su: SurfaceUniform, si: SurfaceInput) -> SurfaceOutputStandard:
         return SurfaceOutputStandard(
             transform_vector(normalized(si.world_normal), su.V) / 2 + 0.5,
-            alpha=full_like_vec(si.world_normal, 0.5, 1)
+            alpha=full_like_vec(si.world_normal, 0.5, 1),
+            aovs={'test': full_like_vec(si.world_normal, 0.4, 3)}
         )
 
 
@@ -51,7 +52,9 @@ class TestSurfaceDeferredRP(unittest.TestCase):
             rp = SurfaceDeferredRenderSession(scene, cam, False)
             fb = rp.false_color_camera_space_normal()
         fb = fb.cpu().numpy()
+        aov = rp.aov('test', [0.1, 0.3, 0.1]).cpu().numpy()
         plotlib.imsave("tmp/test/cylinder-transparent.png", fb)
+        plotlib.imsave("tmp/test/cylinder-aov.png", aov)
         # print(500 / (time.perf_counter() - t))
         # plotlib.imshow(fb)
         # plotlib.show()
