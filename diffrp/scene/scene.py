@@ -10,6 +10,8 @@ class Scene:
 
     def add_light(self, light: Light):
         self.lights.append(light)
+        return self
 
     def add_mesh_object(self, mesh_obj: MeshObject):
         self.objects.append(mesh_obj.preprocess())
+        return self
