@@ -42,7 +42,6 @@ class TestSurfaceDeferredRP(unittest.TestCase):
         mesh = trimesh.creation.cylinder(0.3, 1.0)
         v, f = mesh.vertices, mesh.faces
         # v, f, vn = make_face_soup(mesh.vertices, mesh.faces, mesh.face_normals)
-        ctx = dr.RasterizeCudaContext()
         # t = time.perf_counter()
         scene = Scene()
         scene.add_mesh_object(MeshObject(
@@ -51,7 +50,7 @@ class TestSurfaceDeferredRP(unittest.TestCase):
             M=gpu_f32(trimesh.transformations.identity_matrix()[[0, 2, 1, 3]])
         ))
         for _ in range(5):
-            rp = SurfaceDeferredRenderSession(ctx, scene, cam, False)
+            rp = SurfaceDeferredRenderSession(scene, cam, False)
             fb = rp.false_color_camera_space_normal()
         fb = fb.cpu().numpy()
         plotlib.imsave("tmp/test/cylinder-transparent.png", fb)
@@ -80,16 +79,11 @@ def normalize(gltf: Scene):
 
 class TestGLTF(unittest.TestCase):
 
-    @classmethod
-    def setUpClass(cls):
-        cls.ctx = dr.RasterizeCudaContext()
-
     def render_gltf(self, fp):
         name = os.path.splitext(os.path.basename(fp))[0]
-        ctx = self.ctx
         cam = PerspectiveCamera.from_orbit(640, 640, 3.8, 30, 20, [0, 0, 0])
         gltf = normalize(load_gltf_scene(fp, compute_tangents=True))
-        rp = SurfaceDeferredRenderSession(ctx, gltf, cam, False)
+        rp = SurfaceDeferredRenderSession(gltf, cam, False)
         frame = rp.albedo()
         frame = float4(linear_to_srgb(frame.rgb), frame.a)
         plotlib.imsave("tmp/test/%s-albedo.png" % name, saturate(frame).cpu().numpy())

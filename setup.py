@@ -29,8 +29,10 @@ setuptools.setup(
     ],
     install_requires=[
         'numpy',
+        'torch',
+        'pyexr',
         'calibur',
-        'trimesh',
+        'trimesh[easy]',
         'torch_redstone',
         'typing_extensions',
         'nvdiffrast @ git+https://github.com/eliphatfs/nvdiffrast.git',

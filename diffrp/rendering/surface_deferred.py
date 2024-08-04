@@ -7,12 +7,16 @@ from typing import Union, List, Tuple, Callable, Optional
 from .camera import Camera
 from ..utils.cache import cached
 from ..utils.shader_ops import *
+from ..utils.colors import linear_to_srgb
 from ..utils.composite import alpha_blend
 from ..scene import Scene, ImageEnvironmentLight
 from .interpolator import FullScreenInterpolator, MaskedSparseInterpolator
 from ..utils.coordinates import unit_direction_to_latlong_uv, near_plane_ndc_grid
 from ..materials.base_material import VertexArrayObject, SurfaceInput, SurfaceUniform, SurfaceOutputStandard
 from ..utils.light_transport import prefilter_env_map, pre_integral_env_brdf, irradiance_integral_env_map, fresnel_schlick_roughness
+
+
+ctx_cache = {}
 
 
 @dataclass
@@ -29,13 +33,12 @@ class SurfaceDeferredRenderSessionOptions:
 class SurfaceDeferredRenderSession:
     def __init__(
         self,
-        ctx: Union[dr.RasterizeCudaContext, dr.RasterizeGLContext],
         scene: Scene,
         camera: Camera,
         opaque_only: bool = True,
-        options: Optional[SurfaceDeferredRenderSessionOptions] = None
+        options: Optional[SurfaceDeferredRenderSessionOptions] = None,
+        ctx: Optional[Union[dr.RasterizeCudaContext, dr.RasterizeGLContext]] = None,
     ) -> None:
-        self.ctx = ctx
         self.scene = scene
         self.camera = camera
         self.opaque_only = opaque_only
@@ -43,6 +46,13 @@ class SurfaceDeferredRenderSession:
             options = SurfaceDeferredRenderSessionOptions()
         if opaque_only:
             options.max_layers = 1
+        if ctx is not None:
+            self.ctx = ctx
+        else:
+            device = torch.cuda.current_device()
+            if device not in ctx_cache:
+                ctx_cache[device] = dr.RasterizeCudaContext()
+            self.ctx = ctx_cache[device]
         self.options = options
 
     def _checked_cat(self, attrs: List[torch.Tensor], verts_ref: List[torch.Tensor], expected_dim):
@@ -280,6 +290,11 @@ class SurfaceDeferredRenderSession:
     @cached
     def albedo(self):
         return self.compose_layers(self.albedo_layered())
+
+    @cached
+    def albedo_srgb(self):
+        albedo = self.albedo()
+        return float4(linear_to_srgb(albedo.rgb), albedo.a)
 
     @cached
     def emission(self):
