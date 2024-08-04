@@ -64,13 +64,13 @@ class PerspectiveCamera(Camera):
         return self
 
     @classmethod
-    def from_orbit(cls, h, w, radius, azim, elev, origin):
+    def from_orbit(cls, h, w, radius, azim, elev, origin, fov=30, near=0.1, far=10.0):
         r = radius
-        cam = cls(h=h, w=w)
+        cam = cls(h=h, w=w, fov=fov, near=near, far=far)
         theta, phi = math.radians(azim), math.radians(elev)
-        z = r * math.cos(theta) * math.cos(phi)
-        x = r * math.sin(theta) * math.cos(phi)
-        y = r * math.sin(phi)
+        z = r * math.cos(theta) * math.cos(phi) + origin[2]
+        x = r * math.sin(theta) * math.cos(phi) + origin[0]
+        y = r * math.sin(phi) + origin[1]
         cam.t = trimesh.transformations.translation_matrix([x, y, z])
         cam.lookat(origin)
         return cam
