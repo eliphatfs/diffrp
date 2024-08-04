@@ -1,11 +1,9 @@
 import os
 import glob
-import numpy
 import torch
 import trimesh
 import unittest
 import trimesh.creation
-import nvdiffrast.torch as dr
 import matplotlib.pyplot as plotlib
 from diffrp.rendering.camera import PerspectiveCamera
 from diffrp.materials.base_material import SurfaceInput, SurfaceMaterial, SurfaceUniform, SurfaceOutputStandard
