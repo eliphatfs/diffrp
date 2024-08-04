@@ -34,6 +34,10 @@ extensions = [
 ]  # allows markdown
 myst_all_links_external = True
 
+myst_enable_extensions = [
+    "dollarmath"
+]
+
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ["_templates"]
 
