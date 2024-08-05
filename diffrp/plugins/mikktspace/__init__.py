@@ -36,6 +36,8 @@ def execute(verts: torch.Tensor, normals: torch.Tensor, uv: torch.Tensor):
 
     It takes flat, unrolled vertex positions, normals and uvs.
 
+    The plugin is not thread-safe.
+
     Args:
         verts (torch.Tensor): (F * 3, 3) vertex positions of faces unrolled.
         normals (torch.Tensor): (F * 3, 3) vertex normals of faces unrolled.

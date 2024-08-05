@@ -8,8 +8,8 @@ from .camera import Camera
 from ..utils.cache import cached
 from ..utils.shader_ops import *
 from ..utils.colors import linear_to_srgb
-from ..utils.composite import alpha_blend
 from ..scene import Scene, ImageEnvironmentLight
+from ..utils.composite import alpha_blend, alpha_additive
 from .interpolator import FullScreenInterpolator, MaskedSparseInterpolator
 from ..utils.coordinates import unit_direction_to_latlong_uv, near_plane_ndc_grid
 from ..materials.base_material import VertexArrayObject, SurfaceInput, SurfaceUniform, SurfaceOutputStandard
@@ -21,6 +21,72 @@ ctx_cache = {}
 
 @dataclass
 class SurfaceDeferredRenderSessionOptions:
+    """
+    Options for ``SurfaceDeferredRenderSession``.
+
+    Args:
+        max_layers (int):
+            Maximum layers to be composed for semi-transparency.
+            0 or negative values mean unlimited.
+            Ignored if the render session is created in ``opaque_only`` mode (default).
+            Otherwise, defaults to 0 (unlimited).
+            There is a technical upper-bound of 32767 layers for composition.
+            However, in almost all cases the layers are bounded by your GPU memory,
+            and there will not be 32767 layers in any realistic scenes,
+            so this value will never be reached.
+        interpolator_impl (str):
+            | One of 'stencil_masked' and 'full_screen'.
+            | Specifies the implementation of the interpolator.
+              Defaults to 'stencil_masked'.
+            | For 'stencil_masked' interpolator, for each material,
+              only the active pixels go through the material call.
+              This is memory and compute efficient but introduces more
+              GPU pipeline flushes between material calls.
+              You will see a flattened batched pixels in your material ``shade`` function,
+              which means the pixel input and output tensors will have shape (B, C),
+              where B is number of flattened pixels and C is number of channels.
+            | 'full_screen' is the legacy implementation from DiffRP ``0.0.1``.
+              For each material, all pixels including pixels outside the material region
+              that are discarded afterwards.
+              Pixel input and output tensors in materials shall have shape (B, H, W, C).
+              This implementation uses much more memory and compute,
+              but may be slightly more efficient due to fewer GPU pipeline flushes
+              when there is only one material.
+        deterministic (bool):
+            Try to make the render deterministic.
+            Defaults to True.
+            Usually the variance is low enough for all operations in this deferred pipeline,
+            but in extraordinary cases if you want to accumulate results
+            between different calls to reduce variance
+            for sampling processes, you may turn it off.
+        ibl_specular_samples (int):
+            Sample count for specular lighting in PBR Image-based lighting (IBL).
+            Defaults to 512.
+            Higher samples can reduce bias for environment specular lighting,
+            but takes linearly more memory.
+        ibl_specular_base_resolution (int):
+            Resolution for specular lighting in IBL,
+            whose effect is mostly visible for mirrors (metallic 1, roughness 0).
+            Defaults to 256.
+            Memory is quadratic to this parameter.
+        ibl_specular_mip_levels (int):
+            Levels of mip-maps for IBL specular lighting.
+            Defaults to 5.
+            Can reduce bias for roughness levels if increased,
+            but takes linearly more memory.
+        ibl_diffuse_sample_resolution (int):
+            Sample resolution of diffuse irradiance convolution in IBL.
+            Defaults to 64.
+            Higher resolution can make the diffuse lighting more accurate,
+            but this is usually not necessary.
+            Memory is quadratic to this parameter.
+        ibl_diffuse_base_resolution (int):
+            Resolution of diffuse irradiance convolution computation in IBL.
+            Defaults to 16.
+            Higher resolution can make the diffuse lighting more accurate,
+            but this is usually not necessary.
+            Memory is quadratic to this parameter.
+    """
     max_layers: int = 0
     intepolator_impl: Literal['full_screen', 'stencil_masked'] = 'stencil_masked'
 
@@ -34,10 +100,39 @@ class SurfaceDeferredRenderSessionOptions:
 
     def __post_init__(self):
         if self.max_layers <= 0:
-            self.max_layers = 16383
+            self.max_layers = 32767
 
 
 class SurfaceDeferredRenderSession:
+    """
+    The heart of the deferred rasterization render pipeline in DiffRP.
+    Most intermediate options in this class are cached,
+    so you are recommended to create a new session
+    whenever you change the scene and/or the camera,
+    including rendering multiple frames of the same object,
+    or changing attributes on the object.
+    Initialization of this class is made light-weight and fast.
+
+    It is not thread-safe to run more than one sessions on the same GPU by default.
+    If you need to do this, see the ``ctx`` parameter.
+
+    Args:
+        scene (Scene): The scene to be rendered.
+        camera (Camera): The camera to be rendered.
+        opaque_only (bool): Render in opaque-only mode.
+            Drops support for transparency, and forces all alpha values to be 1.
+            This can save memory and time if you do not need transparency support.
+            Defaults to True.
+            You need to specify False if you need transparency.
+        options (SurfaceDeferredRenderSessionOptions): Options for the session.
+            See :py:class:`SurfaceDeferredRenderSessionOptions` for details.
+        ctx (RasterizeContext): The backend context to be used.
+            By default, each GPU has its own, shared context.
+            It is not thread-safe to run multiple sessions on one context simultaneously.
+            If you use render sessions multi-threaded, you need to create a context for each thread.
+            This render pipeline uses ``nvdiffrast`` as the backend.
+            You can pass your own ``RasterizeCudaContext`` if needed.
+    """
     def __init__(
         self,
         scene: Scene,
@@ -112,6 +207,12 @@ class SurfaceDeferredRenderSession:
     
     @cached
     def clip_space(self):
+        """
+        All vertices concatenated, transformed into the GL clip space for projection.
+
+        Returns:
+            torch.Tensor: Tensor of shape (V, 4).
+        """
         vao = self.vertex_array_object()
         camera = self.camera
         v = camera.V()
@@ -120,6 +221,19 @@ class SurfaceDeferredRenderSession:
     
     @cached
     def rasterize(self):
+        """
+        Rasterize the scene. Each layer is a tensor of shape (1, H, W, 4).
+        xyzw means (u, v, z-depth, triangle_index).
+
+        u, v is defined as the barycentric coordinates:
+        
+        :math:`u \\cdot v_1 + v \\cdot v_2 + (1 - u - v) \\cdot v_3 = p`.
+
+        The layers in the front in the list are the layers in the front (closer to the camera) in 3D.
+
+        Returns:
+            List[torch.Tensor]: rasterized layers. Tensors of shape (1, H, W, 4).
+        """
         vao = self.vertex_array_object()
         clip_space = self.clip_space()
         h, w = self.camera.resolution()
@@ -134,7 +248,12 @@ class SurfaceDeferredRenderSession:
         return r_layers
 
     @cached
-    def layer_material(self):
+    def layer_material(self) -> List[List[Tuple[SurfaceInput, SurfaceOutputStandard]]]:
+        """
+        Evaluate materials for the scene. Each layer is a list of tensors of material inputs/outputs.
+        Shapes of each attribute depend on the interpolator implementation.
+        See the documentation for ``SurfaceInput``, ``SurfaceOutputStandard`` and ``interpolator_impl``.
+        """
         m_layers: List[List[Tuple[SurfaceInput, SurfaceOutputStandard]]] = []
         vao = self.vertex_array_object()
         r_layers = self.rasterize()
@@ -161,7 +280,24 @@ class SurfaceDeferredRenderSession:
         self,
         operator: Callable[[SurfaceInput, SurfaceOutputStandard], torch.Tensor],
         default: Union[List[float], torch.Tensor]
-    ):
+    ) -> List[torch.Tensor]:
+        """
+        Collect the screen G-buffers from material evaluation results.
+        
+        The results from the operator given are collected against all materials into
+        screen-sized buffers, one per rasterized layer.
+
+        Args:
+            operator (callable):
+                A function that takes two arguments, ``SurfaceInput`` and
+                ``SurfaceOutputStandard`` as input, and outputs a tensor.
+            default (List[float]):
+                If the operator returns ``None``, the default value is filled for the material.
+                The default value is also used for inactive pixels (pixels without geometry).
+        
+        Returns:
+            List[torch.Tensor]: Layered G-buffers collected.
+        """
         vao = self.vertex_array_object()
         h, w = self.camera.resolution()
         gbuffers = []
@@ -202,7 +338,27 @@ class SurfaceDeferredRenderSession:
         colors: list, alphas: Optional[list] = None,
         blend_fn: Optional[Callable] = None,
         return_alpha: bool = True
-    ):
+    ) -> torch.Tensor:
+        """
+        Compose multiple layers into one.
+        The layers in the front in the lists are the layers in the front in 3D.
+
+        Args:
+            colors (List[torch.Tensor]):
+                RGB colors, or arbitrary values to be blended.
+                Tensors can have arbitrary shapes, but consistent across the list.
+            alphas (List[torch.Tensor]):
+                Alphas. Tensors should have matching shapes with ``colors``,
+                with the last dimension (channels) equal to 1.
+                Defaults to alphas of layers in the current scene.
+            blend_fn (callable):
+                A function that accepts 4 arguments: (fg_value, fg_alpha, bg_value, bg_alpha)
+                and returns a tuple of composition results (value, alpha).
+                Defaults to alpha blending.
+            return_alpha (bool):
+                Whether to include the alpha channel in the result.
+                The alpha channel will be concatenated to the end if set.
+        """
         if alphas is None:
             alphas = self.alpha_layered()
         if blend_fn is None:
@@ -214,21 +370,25 @@ class SurfaceDeferredRenderSession:
         return torch.flipud((floatx(frame_buffer, frame_alpha) if return_alpha else frame_buffer).squeeze(0))
 
     @cached
-    def alpha_layered(self):
+    def alpha_layered(self) -> List[torch.Tensor]:
+        """
+        Returns:
+            List[torch.Tensor]: Alphas of layers in the current scene.
+        """
         if self.opaque_only:
             return self.gbuffer_collect(lambda x, y: ones_like_vec(x.interpolator.vi_data, 1), [0.])
         else:
             return self.gbuffer_collect(lambda x, y: y.alpha if y.alpha is not None else ones_like_vec(x.interpolator.vi_data, 1), [0.])
 
     @cached
-    def albedo_layered(self):
+    def albedo_layered(self) -> List[torch.Tensor]:
         return self.gbuffer_collect(lambda x, y: y.albedo, [1.0, 0.0, 1.0])
 
     @cached
-    def emission_layered(self):
+    def emission_layered(self) -> List[torch.Tensor]:
         return self.gbuffer_collect(lambda x, y: y.emission, [0.0, 0.0, 0.0])
 
-    def collector_mso(self, si: SurfaceInput, so: SurfaceOutputStandard):
+    def _collector_mso(self, si: SurfaceInput, so: SurfaceOutputStandard):
         if so.metallic is None and so.smoothness is None and so.occlusion is None:
             return None
         return float3(
@@ -238,10 +398,10 @@ class SurfaceDeferredRenderSession:
         )
 
     @cached
-    def mso_layered(self):
-        return self.gbuffer_collect(self.collector_mso, [0.0, 0.5, 1.0])
+    def mso_layered(self) -> List[torch.Tensor]:
+        return self.gbuffer_collect(self._collector_mso, [0.0, 0.5, 1.0])
 
-    def collector_world_normal(self, si: SurfaceInput, so: SurfaceOutputStandard):
+    def _collector_world_normal(self, si: SurfaceInput, so: SurfaceOutputStandard):
         if so.normal is None:
             return si.world_normal
         if so.normal_space == 'tangent':
@@ -257,11 +417,11 @@ class SurfaceDeferredRenderSession:
         assert False, "Unknown normal space: " + so.normal_space
 
     @cached
-    def world_space_normal_layered(self):
-        return self.gbuffer_collect(self.collector_world_normal, [0.0, 0.0, 0.0])
+    def world_space_normal_layered(self) -> List[torch.Tensor]:
+        return self.gbuffer_collect(self._collector_world_normal, [0.0, 0.0, 0.0])
 
     @cached
-    def camera_space_normal_layered(self):
+    def camera_space_normal_layered(self) -> List[torch.Tensor]:
         world_normals = self.world_space_normal_layered()
         return [
             normalized(transform_vector3x3(world_normal, self.camera.V()))
@@ -269,23 +429,29 @@ class SurfaceDeferredRenderSession:
         ]
 
     @cached
-    def depth_layered(self):
+    def depth_layered(self) -> List[torch.Tensor]:
         return self.gbuffer_collect(lambda x, y: -transform_vector3x3(x.world_pos, self.camera.V()).z, [0.])
 
     @cached
-    def distance_layered(self):
+    def distance_layered(self) -> List[torch.Tensor]:
         return self.gbuffer_collect(lambda x, y: length(x.world_pos - x.uniforms.camera_position), [0.])
 
     @cached
-    def world_position_layered(self):
+    def world_position_layered(self) -> List[torch.Tensor]:
         return self.gbuffer_collect(lambda x, y: x.world_pos, [0., 0., 0.])
 
     @cached
-    def local_position_layered(self):
+    def local_position_layered(self) -> List[torch.Tensor]:
         return self.gbuffer_collect(lambda x, y: x.local_pos, [0., 0., 0.])
 
     @cached
-    def view_dir(self):
+    def view_dir(self) -> torch.Tensor:
+        """
+        Returns:
+            torch.Tensor:
+                Full-screen unit direction vectors of outbound rays from the camera.
+                Tensor of shape (H, W, 3).
+        """
         grid = near_plane_ndc_grid(*self.camera.resolution(), torch.float32, 'cuda')
         grid = transform_point(grid, torch.linalg.inv(self.camera.P()))
         grid = grid.xyz / grid.w
@@ -296,61 +462,187 @@ class SurfaceDeferredRenderSession:
 
     @cached
     def albedo(self):
+        """
+        Returns:
+            torch.Tensor:
+                Rendered albedo, or base color RGBA, in linear space.
+                Albedo from transparent objects are alpha-blended if ``opaque_only`` is disabled.
+                Tensor of shape (H, W, 4).
+        """
         return self.compose_layers(self.albedo_layered())
 
     @cached
     def albedo_srgb(self):
+        """
+        Returns:
+            torch.Tensor:
+                Rendered albedo, or base color RGBA. RGBs are in sRGB space.
+                Albedo from transparent objects are alpha-blended in linera space if ``opaque_only`` is disabled.
+                Tensor of shape (H, W, 4).
+        """
         albedo = self.albedo()
         return float4(linear_to_srgb(albedo.rgb), albedo.a)
 
     @cached
     def emission(self):
-        return self.compose_layers(self.emission_layered())
+        """
+        Returns:
+            torch.Tensor:
+                Rendered direct emission RGB, in linear space.
+                Emission is composed additively for transparent objects if ``opaque_only`` is disabled.
+                Tensor of shape (H, W, 3).
+        """
+        return self.compose_layers(self.emission_layered(), blend_fn=alpha_additive, return_alpha=False)
 
     @cached
     def false_color_mask_mso(self):
+        """
+        Returns:
+            torch.Tensor:
+                Rendered Metallic, Smoothness and ambiend Occlusion values
+                linearly mapped to RGB channels.
+                Values are alpha-blended for transparent objects, if ``opaque_only`` is disabled.
+                Alpha channel is geometry transparency.
+                Tensor of shape (H, W, 4).
+        """
         return self.compose_layers(self.mso_layered())
 
     @cached
     def world_space_normal(self):
+        """
+        Returns:
+            torch.Tensor:
+                World-space normals. Raw values of unit vectors.
+                Values are alpha-blended for transparent objects, if ``opaque_only`` is disabled.
+                Alpha channel is geometry transparency.
+                Tensor of shape (H, W, 4).
+        """
         return self.compose_layers(self.world_space_normal_layered())
 
     @cached
     def camera_space_normal(self):
+        """
+        Returns:
+            torch.Tensor:
+                Camera-space normals ([0, 0, 1] is directly facing the camera).
+                Raw values of unit vectors.
+                Values are alpha-blended for transparent objects, if ``opaque_only`` is disabled.
+                Alpha channel is geometry transparency.
+                Tensor of shape (H, W, 4).
+        """
         return self.compose_layers(self.camera_space_normal_layered())
 
     @cached
     def false_color_world_space_normal(self):
+        """
+        Returns:
+            torch.Tensor:
+                World-space normals XYZ linearly mapped to RGB space from [-1, 1] to [0, 1].
+                Values are alpha-blended for transparent objects, if ``opaque_only`` is disabled.
+                Alpha channel is geometry transparency.
+                Tensor of shape (H, W, 4).
+        """
         n = self.world_space_normal()
         return float4(n.xyz * 0.5 + 0.5, n.a)
 
     @cached
     def false_color_camera_space_normal(self):
+        """
+        Returns:
+            torch.Tensor:
+                Camera-space normals XYZ linearly mapped to RGB space from [-1, 1] to [0, 1],
+                the common blue-ish rendering of scene normals.
+                Values are alpha-blended for transparent objects, if ``opaque_only`` is disabled.
+                Alpha channel is geometry transparency.
+                Tensor of shape (H, W, 4).
+        """
         n = self.camera_space_normal()
         return float4(n.xyz * 0.5 + 0.5, n.a)
 
     @cached
     def local_position(self):
+        """
+        Returns:
+            torch.Tensor:
+                Object-space positions XYZ raw values.
+                Values are alpha-blended for transparent objects, if ``opaque_only`` is disabled.
+                Alpha channel is geometry transparency.
+                Tensor of shape (H, W, 4).
+        """
         return self.compose_layers(self.local_position_layered())
 
     @cached
     def world_position(self):
+        """
+        Returns:
+            torch.Tensor:
+                World-space positions XYZ raw values.
+                Values are alpha-blended for transparent objects, if ``opaque_only`` is disabled.
+                Alpha channel is geometry transparency.
+                Tensor of shape (H, W, 4).
+        """
         return self.compose_layers(self.world_position_layered())
 
     @cached
     def false_color_nocs(self):
+        """
+        Note: Objects are NOT automatically normalized before this rendering!
+
+        Returns:
+            torch.Tensor:
+                Object-space positions XYZ linearly mapped to RGB space from [-1, 1] to [0, 1],
+                conformal with the NOCS definition.
+                Values are alpha-blended for transparent objects, if ``opaque_only`` is disabled.
+                Alpha channel is geometry transparency.
+                Tensor of shape (H, W, 4).
+        """
         n = self.local_position()
         return float4(n.xyz * 0.5 + 0.5, n.a)
 
     @cached
     def depth(self):
+        """
+        Returns:
+            torch.Tensor:
+                Depth of the scene, raw values.
+                Depth is distance to the camera-z plane.
+                Values are alpha-blended for transparent objects, if ``opaque_only`` is disabled.
+                Emptiness results in zero depth.
+                Tensor of shape (H, W, 1).
+        """
         return self.compose_layers(self.depth_layered(), return_alpha=False)
 
     @cached
     def distance(self):
+        """
+        Returns:
+            torch.Tensor:
+                Distance of the scene to the camera, raw values.
+                Has a similar effect but slightly different definition to ``depth``.
+                Values are alpha-blended for transparent objects, if ``opaque_only`` is disabled.
+                Emptiness results in zero distance.
+                Tensor of shape (H, W, 1).
+        """
         return self.compose_layers(self.distance_layered(), return_alpha=False)
     
     def aov(self, key: str, bg_value: List[float]):
+        """
+        Args:
+            key (str): The key you want to collect from material AOV outputs.
+            bg_value (List[float]):
+                Values to fill in where the AOV is either
+                not specified in materials or background is hit.
+
+        Returns:
+            torch.Tensor:
+                Collected full-screen buffers of AOVs.
+                Values are alpha-blended for transparent objects, if ``opaque_only`` is disabled.
+                Alpha channel is geometry transparency.
+                Tensor of shape (H, W, C + 1).
+        
+        See also:
+            :py:class:`diffrp.materials.base_material.SurfaceOutputStandard`
+        """
         return self.compose_layers(self.gbuffer_collect(lambda x, y: y.aovs and y.aovs.get(key), bg_value))
 
     def ibl(
@@ -361,6 +653,11 @@ class SurfaceDeferredRenderSession:
         mso: torch.Tensor,
         albedo: torch.Tensor
     ):
+        """
+        Evaluate Image-based Lighting (IBL) given the necessary G-buffers.
+
+        Uses split-sum approximation and pre-filtering techniques.
+        """
         opt = self.options
         env_brdf = pre_integral_env_brdf()
         image_rh = light.image_rh()
@@ -413,7 +710,7 @@ class SurfaceDeferredRenderSession:
         return render
 
     @cached
-    def pbr_layered(self):
+    def pbr_layered(self) -> List[torch.Tensor]:
         return [
             self.pbr_layer(world_normal, self.view_dir(), mso, albedo)
             for world_normal, mso, albedo in zip(
@@ -425,6 +722,15 @@ class SurfaceDeferredRenderSession:
 
     @cached
     def pbr(self):
+        """
+        Physically-based rendering.
+
+        Returns:
+            torch.Tensor:
+                Rendered HDR RGBA image in linear space.
+                Colors from transparent objects are alpha-blended if ``opaque_only`` is disabled.
+                Tensor of shape (H, W, 4).
+        """
         skybox = 0
         any_skybox = False
         for light in self.scene.lights:
@@ -440,6 +746,19 @@ class SurfaceDeferredRenderSession:
             return self.compose_layers(self.pbr_layered())
 
     def nvdr_antialias(self, rgb: torch.Tensor):
+        """
+        Applies the anti-aliasing technique in ``nvdiffrast`` to an image.
+        This can generate visibility gradients in differentiable rendering.
+        
+        Semi-transparent objects are not well-supported by this operation.
+        
+        Args:
+            rgb (torch.Tensor):
+                Tensor of shape (H, W, 3). RGB image to be anti-aliased.
+                Must be rendered in this session.
+        Returns:
+            torch.Tensor: Anti-aliased image.
+        """
         rgb = torch.flipud(rgb)[None].contiguous()
         rast = self.rasterize()[0].contiguous()
         vao = self.vertex_array_object()

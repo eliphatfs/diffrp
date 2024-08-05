@@ -18,5 +18,9 @@ def additive(bgc: torch.Tensor, bga: torch.Tensor, fgc: torch.Tensor, fga: torch
     return bgc + fgc, saturate(bga + fga)
 
 
+def alpha_additive(bgc: torch.Tensor, bga: torch.Tensor, fgc: torch.Tensor, fga: torch.Tensor):
+    return bgc + fgc * fga, saturate(bga + fga)
+
+
 def ssaa_downscale(rgb, factor: int):
     return to_hwc(torch.nn.functional.interpolate(to_bchw(rgb), scale_factor=1 / factor, mode='area'))

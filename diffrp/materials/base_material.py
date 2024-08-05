@@ -128,7 +128,7 @@ class SurfaceInput:
         
         Returns:
             torch.Tensor:
-                Tensor of shape (..., C) where ... is batched pixels, can be 1D or 2D according to interpolator flags.
+                Tensor of shape (..., C) where ... is batched pixels.
                 C is the number of channels in the vertex attribute you input in ``vertex_buffer``.
         """
         if world_transform == 'point':
@@ -152,7 +152,7 @@ class SurfaceInput:
 
         Returns:
             torch.Tensor:
-                Tensor of shape (..., 3) where ... is batched pixels, can be 1D or 2D according to interpolator flags.
+                Tensor of shape (..., 3) where ... is batched pixels.
         """
         return normalized(self.world_pos - self.uniforms.camera_position)
 
@@ -164,7 +164,7 @@ class SurfaceInput:
 
         Returns:
             torch.Tensor:
-                Tensor of shape (..., 3) where ... is batched pixels, can be 1D or 2D according to interpolator flags.
+                Tensor of shape (..., 3) where ... is batched pixels.
         """
         return self.interpolate_ex(self.vertex_buffers.world_pos)
 
@@ -176,7 +176,7 @@ class SurfaceInput:
 
         Returns:
             torch.Tensor:
-                Tensor of shape (..., 3) where ... is batched pixels, can be 1D or 2D according to interpolator flags.
+                Tensor of shape (..., 3) where ... is batched pixels.
         """
         return self.interpolate_ex(self.vertex_buffers.verts)
 
@@ -192,7 +192,7 @@ class SurfaceInput:
 
         Returns:
             torch.Tensor:
-                Tensor of shape (..., 3) where ... is batched pixels, can be 1D or 2D according to interpolator flags.
+                Tensor of shape (..., 3) where ... is batched pixels.
         """
         return self.interpolate_ex(self.vertex_buffers.normals, 'vectornor')
 
@@ -205,7 +205,7 @@ class SurfaceInput:
 
         Returns:
             torch.Tensor:
-                Tensor of shape (..., 3) where ... is batched pixels, can be 1D or 2D according to interpolator flags.
+                Tensor of shape (..., 3) where ... is batched pixels.
         """
         return normalized(self.world_normal_unnormalized)
 
@@ -220,7 +220,7 @@ class SurfaceInput:
 
         Returns:
             torch.Tensor:
-                Tensor of shape (..., 4) where ... is batched pixels, can be 1D or 2D according to interpolator flags.
+                Tensor of shape (..., 4) where ... is batched pixels.
         """
         # F4, vertex color, default to ones
         return self.interpolate_ex(self.vertex_buffers.color)
@@ -236,7 +236,7 @@ class SurfaceInput:
 
         Returns:
             torch.Tensor:
-                Tensor of shape (..., 2) where ... is batched pixels, can be 1D or 2D according to interpolator flags.
+                Tensor of shape (..., 2) where ... is batched pixels.
         """
         return self.interpolate_ex(self.vertex_buffers.uv)
 
@@ -252,7 +252,7 @@ class SurfaceInput:
 
         Returns:
             torch.Tensor:
-                Tensor of shape (..., 4) where ... is batched pixels, can be 1D or 2D according to interpolator flags.
+                Tensor of shape (..., 4) where ... is batched pixels.
         """
         return self.interpolate_ex(self.vertex_buffers.tangents, 'vector3norex1')
 
@@ -270,7 +270,7 @@ class SurfaceInput:
 
         Returns:
             torch.Tensor:
-                Tensor of shape (..., C) where ... is batched pixels, can be 1D or 2D according to interpolator flags.
+                Tensor of shape (..., C) where ... is batched pixels.
                 C is the number of channels in the vertex attribute you input in ``MeshObject``.
         """
         return self.custom_surface_inputs
@@ -304,7 +304,7 @@ class SurfaceOutputStandard:
     All outputs are optional.
     The outputs shapes are all (..., C), where (...) is batched pixels.
     They should match the batch dimensions provided by ``SurfaceInput``.
-    It can be 1D or 2D according to interpolator implementation, 1D under default settings
+    It can be 1D to 3D according to interpolator implementation, 1D under default settings
     -- a batch of pixel features of shape (B, C).
     See the documentation for interpolator options and interpolators for more details.
     

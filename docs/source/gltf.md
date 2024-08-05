@@ -138,7 +138,34 @@ The result should look like:
 :alt: Spheres Albedo render.
 ```
 
-### 7. PBR Rendering
+### 7. Other Attributes
+
+DiffRP also supports other attributes that may or may not be represented as an LDR RGB image.
+Here we list these useful methods including those we cover in other sections of this tutorial.
+Please see the relevant API reference in {py:class}`diffrp.rendering.surface_deferred.SurfaceDeferredRenderSession` for details explaining the attributes.
+
+The methods all return (H, W, C) full-screen renders.
+
+```python
+rp.aov('my_aov', [0.])
+rp.albedo()
+rp.albedo_srgb()
+rp.emission()
+rp.pbr()
+rp.false_color_camera_space_normal()
+rp.false_color_world_space_normal()
+rp.false_color_mask_mso()
+rp.false_color_nocs()
+rp.camera_space_normal()
+rp.world_space_normal()
+rp.local_position()
+rp.world_position()
+rp.depth()
+rp.distance()
+rp.view_dir()
+```
+
+### 8. PBR Rendering
 
 Currently, DiffRP supports fully differentiable Image-based lighting in the deferred shading pipeline. The support for directional and point lights will be added soon.
 
@@ -178,7 +205,7 @@ to_pil(pbr).show()
 :alt: PBR raw HDR output in linear space.
 ```
 
-### 8. Post-processing: Tone-mapping and Anti-aliasing
+### 9. Post-processing: Tone-mapping and Anti-aliasing
 
 The previous image seems weirdly dark. It is due to we are in HDR linear space, but we are viewing it as a LDR sRGB PNG image, which is the wrong color space.
 

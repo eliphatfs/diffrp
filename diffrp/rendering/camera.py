@@ -8,24 +8,48 @@ from ..utils.shader_ops import gpu_f32
 
 
 class Camera:
+    """
+    Abstract class for camera specification.
+
+    You need to implement the ``V()``, ``P()`` and ``resolution()`` methods
+    if you inherit from the class.
+    """
 
     def __init__(self) -> None:
         self.t = trimesh.transformations.translation_matrix([0, 0.0, 3.2])
 
     def V(self):
+        """
+        Returns:
+            torch.Tensor:
+                | GPU tensor of shape (4, 4). GL view matrix.
+                | Inverse of the c2w or camera pose transform matrix.
+                | You may need to convert the camera poses if the pose is not in GL convention
+                  (X right, Y up, -Z forward). You may use ``calibur`` for this.
+                | It should be an affine transform matrix with the last row fixed to [0, 0, 0, 1].
+                  It is also often called an extrinsic matrix or w2c matrix in other conventions.
+        """
         return gpu_f32(trimesh.transformations.inverse_matrix(self.t))
 
     def P(self):
+        """
+        Returns:
+            torch.Tensor: GPU tensor of shape (4, 4). GL projection matrix.
+        """
         raise NotImplementedError
 
     def resolution(self):
         """
-        returns: h, w
+        Returns:
+            Tuple[int, int]: Resolution in (h, w) order.
         """
         raise NotImplementedError
 
 
 class RawCamera(Camera):
+    """
+    Raw data-driven camera that takes GPU tensors of the view and projection matrices to drive the camera.
+    """
     def __init__(self, h: int, w: int, v: torch.Tensor, p: torch.Tensor) -> None:
         self.h = h
         self.w = w
@@ -42,6 +66,9 @@ class RawCamera(Camera):
         return self.h, self.w
 
 class PerspectiveCamera(Camera):
+    """
+    Perspective camera class. Angles are in degrees.
+    """
     def __init__(self, fov=30, h=512, w=512, near=0.1, far=10.0) -> None:
         super().__init__()
         self.fov = fov
@@ -82,6 +109,23 @@ class PerspectiveCamera(Camera):
 
     @classmethod
     def from_orbit(cls, h, w, radius, azim, elev, origin, fov=30, near=0.1, far=10.0):
+        """
+        Create a perspective camera from an orbital camera.
+
+        Args:
+            h (int): Height.
+            w (int): Width.
+            radius (float): Distance to focus origin.
+            azim (float): Azimuth angle in degrees relative to focus origin. +Z is 0 degree.
+            elev (float): Elevation angle in degrees relative to focus origin.
+                -90 is down-up and 90 is up-down.
+                Note that -90 and 90 are extreme values where azimuth is undefined,
+                so use values like 89.999 in these cases instead.
+            origin (List[float]): List of 3 floats, focus point of the camera.
+            fov (float): Vertical Field of View in degrees.
+            near (float): Camera near plane distance.
+            far (float): Camera far plane distance.
+        """
         r = radius
         cam = cls(h=h, w=w, fov=fov, near=near, far=far)
         theta, phi = math.radians(azim), math.radians(elev)
