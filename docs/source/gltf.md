@@ -8,7 +8,7 @@ In this section, we will render the [MetalRoughSpheresNoTextures](https://github
 
 ### 1. Loading the Scene
 
-DiffRP includes a easy method to load a GLB file into a scene.
+DiffRP includes an easy method to load a GLB file into a scene.
 
 ```python
 from diffrp.loaders.gltf_loader import load_gltf_scene
