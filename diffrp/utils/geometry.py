@@ -3,6 +3,19 @@ from .shader_ops import normalized, cross
 
 
 def make_face_soup(verts, tris, face_normals):
+    """
+    Make a face soup geometry from vertices, triangles and face normals.
+
+    Args:
+        verts (torch.Tensor): Tensor of shape (num_verts, 3) containing vertex coordinates.
+        faces (torch.Tensor): Tensor of shape (num_faces, 3) containing triangle indices.
+        face_normals (torch.Tensor): Tensor of shape (num_faces, 3) containing face normals.
+        
+    Returns:
+        tuple of (verts, tris, vertex_normals):
+            Constructed geometry.
+            There are 3 * num_faces vertices and num_faces triangles in the result.
+    """
     return (
         verts[tris].reshape(-1, 3),
         torch.arange(len(tris.reshape(-1)), device=tris.device, dtype=torch.int32).reshape(tris.shape),
@@ -11,6 +24,18 @@ def make_face_soup(verts, tris, face_normals):
 
 
 def compute_face_normals(verts: torch.Tensor, faces: torch.Tensor, normalize=False):
+    """
+    Compute per-face normals from vertices and faces.
+    Faces are assumed to be CCW winding.
+
+    Args:
+        verts (torch.Tensor): Tensor of shape (num_verts, 3) containing vertex coordinates.
+        faces (torch.Tensor): Tensor of shape (num_faces, 3) containing triangle indices.
+        normalize (bool): Whether the results should be normalized.
+        
+    Returns:
+        torch.Tensor: Tensor of shape (num_faces, 3) containing per-face normals.
+    """
     face_normals = cross(verts[faces[:, 1]] - verts[faces[:, 0]], 
                          verts[faces[:, 2]] - verts[faces[:, 0]])
     return normalized(face_normals) if normalize else face_normals
@@ -19,13 +44,14 @@ def compute_face_normals(verts: torch.Tensor, faces: torch.Tensor, normalize=Fal
 def compute_vertex_normals(verts: torch.Tensor, faces: torch.Tensor):
     """
     Compute per-vertex normals from vertices and faces.
+    Faces are assumed to be CCW winding.
     
     Args:
         verts (torch.Tensor): Tensor of shape (num_verts, 3) containing vertex coordinates.
         faces (torch.Tensor): Tensor of shape (num_faces, 3) containing triangle indices.
         
     Returns:
-        torch.Tensor: Tensor of shape (num_verts, 3) containing per-vertex normals.
+        torch.Tensor: Tensor of shape (num_verts, 3) containing normalized per-vertex normals.
     """
     face_normals = compute_face_normals(verts, faces)
     

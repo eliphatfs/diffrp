@@ -44,7 +44,7 @@ class MeshObject:
             Defaults to zeros.
         custom_attrs (Dict[str, torch.Tensor]):
             Arbitrary attributes you want to bind to your vertices.
-            Tensor of shape (V, *) for each attribute, dtype float32.
+            Tensor of shape (V, \\*) for each attribute, dtype float32.
     """
     # material
     material: SurfaceMaterial

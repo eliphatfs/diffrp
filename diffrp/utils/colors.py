@@ -1,19 +1,33 @@
 import torch
 
 
-def linear_to_srgb(rgb):
+def linear_to_srgb(rgb: torch.Tensor) -> torch.Tensor:
+    """
+    Converts from linear space to sRGB space.
+    It is recommended to have the inputs already in LDR (range 0 to 1).
+
+    The output has the same shape as the input.
+    """
     if torch.is_grad_enabled():
         rgb = torch.clamp_min(rgb, 1e-5)
     return torch.where(rgb < 0.0031308, 12.92 * rgb, 1.055 * rgb ** (1 / 2.4) - 0.055)
 
 
-def srgb_to_linear(rgb):
+def srgb_to_linear(rgb: torch.Tensor) -> torch.Tensor:
+    """
+    Converts from sRGB space to linear space.
+
+    The output has the same shape as the input.
+    """
     if torch.is_grad_enabled():
         rgb = torch.clamp_min(rgb, 1e-5)
     return torch.where(rgb < 0.04045, rgb * (1 / 12.92), (1 / 1.055) * ((rgb + 0.055) ** 2.4))
 
 
 def aces_simple(x):
+    """
+    Simple ACES mapping of color values.
+    """
     a = 2.51
     b = 0.03
     c = 2.43
@@ -23,6 +37,9 @@ def aces_simple(x):
 
 
 def aces_fit(color: torch.Tensor):
+    """
+    More accurate ACES mapping of color values.
+    """
     aces_i = color.new_tensor([
         [0.59719, 0.35458, 0.04823],
         [0.07600, 0.90834, 0.01566],

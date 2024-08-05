@@ -16,6 +16,16 @@ def latlong_grid(H, W, dtype, device):
 
 
 def angles_to_unit_direction(theta: torch.Tensor, phi: torch.Tensor):
+    """
+    Convert angle tensors (theta, phi) into unit direction vectors (x, y, z).
+
+    The method is broadcastable.
+
+    Inputs angles are in radians, unlike ``from_orbit``.
+
+    See also:
+        :py:obj:`diffrp.rendering.camera.PerspectiveCamera.from_orbit`.
+    """
     return _angles_to_unit_direction_impl(theta, phi)
 
 
@@ -28,6 +38,16 @@ def _angles_to_unit_direction_impl(theta: torch.Tensor, phi: torch.Tensor):
 
 
 def unit_direction_to_angles(L: torch.Tensor):
+    """
+    Convert a unit direction vector (...batch_dims, 3) into two angle tensors (theta, phi).
+    Theta and phi refer to the azimuth and elevation, respectively.
+
+    Theta and phi will have one fewer dimension, shape (...batch_dims).
+    These angles are in radians, unlike ``from_orbit``.
+
+    See also:
+        :py:obj:`diffrp.rendering.camera.PerspectiveCamera.from_orbit`.
+    """
     theta = torch.atan2(L.x, L.z)
     phi = torch.asin(torch.clamp(L.y, -1, 1))
     return theta, phi

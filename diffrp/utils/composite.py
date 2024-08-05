@@ -4,6 +4,21 @@ from .shader_ops import saturate, split_alpha, to_bchw, to_hwc
 
 
 def background_alpha_compose(bg: Union[torch.Tensor, List[Union[float, int]], float, int], fgca: torch.Tensor):
+    """
+    Compose a background color to a foreground via alpha blending.
+
+    It not only applies to RGB color and RGBA foregrounds, but also general linear data.
+
+    The background should be one element shorter than the foreground elements.
+
+    Args:
+        bg: Tensor or List[float] or number.
+            A single number is equivalent to the RGB list filled by it.
+            The length should be one less than foreground.
+        fgca: Tensor with alpha, shape (..., C + 1).
+    Returns:
+        torch.Tensor: Composed result, shape (..., C).
+    """
     fgc, fga = split_alpha(fgca)
     if not torch.is_tensor(bg):
         bg = fgca.new_tensor(bg)
