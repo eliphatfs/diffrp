@@ -23,7 +23,14 @@ ctx_cache = {}
 class SurfaceDeferredRenderSessionOptions:
     max_layers: int = 0
     intepolator_impl: Literal['full_screen', 'stencil_masked'] = 'stencil_masked'
-    ibl_specular_samples: int = 1024
+
+    deterministic: bool = True
+
+    ibl_specular_samples: int = 512
+    ibl_specular_base_resolution: int = 256
+    ibl_specular_mip_levels: int = 5
+    ibl_diffuse_sample_resolution: int = 64
+    ibl_diffuse_base_resolution: int = 16
 
     def __post_init__(self):
         if self.max_layers <= 0:
@@ -354,10 +361,21 @@ class SurfaceDeferredRenderSession:
         mso: torch.Tensor,
         albedo: torch.Tensor
     ):
+        opt = self.options
         env_brdf = pre_integral_env_brdf()
         image_rh = light.image_rh()
-        pre_levels = prefilter_env_map(image_rh, deterministic=True)
-        irradiance = irradiance_integral_env_map(image_rh)
+        pre_levels = prefilter_env_map(
+            image_rh,
+            deterministic=opt.deterministic,
+            base_resolution=opt.ibl_specular_base_resolution,
+            num_levels=opt.ibl_specular_mip_levels,
+            num_samples=opt.ibl_specular_samples
+        )
+        irradiance = irradiance_integral_env_map(
+            image_rh,
+            premip_resolution=opt.ibl_diffuse_sample_resolution,
+            base_resolution=opt.ibl_diffuse_base_resolution
+        )
 
         n_dot_v = torch.relu(dot(world_normal, -view_dir))
         r = reflect(view_dir, world_normal)
@@ -408,10 +426,12 @@ class SurfaceDeferredRenderSession:
     @cached
     def pbr(self):
         skybox = 0
+        any_skybox = False
         for light in self.scene.lights:
             if isinstance(light, ImageEnvironmentLight) and light.render_skybox:
+                any_skybox = True
                 skybox = skybox + sample2d(light.image_rh(), float2(*unit_direction_to_latlong_uv(self.view_dir())))
-        if skybox is not 0:
+        if any_skybox:
             return self.compose_layers(
                 self.pbr_layered() + [skybox],
                 self.alpha_layered() + [ones_like_vec(skybox, 1)]
