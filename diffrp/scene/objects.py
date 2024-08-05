@@ -9,6 +9,43 @@ from ..utils.geometry import make_face_soup, compute_face_normals, compute_verte
 
 @dataclass
 class MeshObject:
+    """
+    Represents a triangle mesh object in the scene.
+
+    Args:
+        material (SurfaceMaterial):
+            The material to render with.
+            You can use the :py:class:`diffrp.materials.default_material.DefaultMaterial`
+            if you only care about the triangle geometry.
+        verts (torch.Tensor):
+            GPU tensor of vertices. Tensor of shape (V, 3), dtype float32.
+        tris (torch.IntTensor):
+            GPU tensor of indices. Tensor of shape (F, 3), dtype int32.
+        normals (torch.Tensor or str):
+            GPU tensor of vertex normals. Tensor of shape (V, 3), dtype float32.
+            Alternatively, you can specify 'flat' or 'smooth' here.
+            Automatic normals with flat or smooth faces will be computed.
+            Defaults to 'flat'.
+        M (torch.Tensor):
+            Model matrix, or pose transform of the object.
+            Tensor of shape (4, 4), dtype float32.
+            Defaults to identity.
+        colors (torch.Tensor):
+            Linear-space RGBA vertex colors, in range [0, 1].
+            Tensor of shape (V, 4), dtype float32.
+            Defaults to white (all ones).
+        uv (torch.Tensor):
+            UV coordinates of vertices. Tensor of shape (V, 2), dtype float32.
+            Defaults to zeros.
+        tangents (torch.Tensor):
+            Tangent spaces of vertices. Tensor of shape (V, 4), dtype float32.
+            The first 3 dimensions are the tangent vector.
+            The last dimension is sign of the bitangent.
+            Defaults to zeros.
+        custom_attrs (Dict[str, torch.Tensor]):
+            Arbitrary attributes you want to bind to your vertices.
+            Tensor of shape (V, *) for each attribute, dtype float32.
+    """
     # material
     material: SurfaceMaterial
 
