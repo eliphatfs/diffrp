@@ -1,3 +1,11 @@
+"""
+Implementation of different varying variable interpolators.
+
+This is an implementation detail and has no guarantee on API stability.
+
+See ``intepolator_impl`` in :py:class:`diffrp.rendering.surface_deferred.SurfaceDeferredRenderSessionOptions`
+for explanation on selecting interpolators.
+"""
 import abc
 import torch
 from typing import Optional

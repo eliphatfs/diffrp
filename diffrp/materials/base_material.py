@@ -299,6 +299,59 @@ class CustomSurfaceInputs(Mapping):
 
 @dataclass
 class SurfaceOutputStandard:
+    """
+    The output structure that specifies standard and custom (AOV) outputs from the material (shader).
+    All outputs are optional.
+    The outputs shapes are all (..., C), where (...) is batched pixels.
+    They should match the batch dimensions provided by ``SurfaceInput``.
+    It can be 1D or 2D according to interpolator implementation, 1D under default settings
+    -- a batch of pixel features of shape (B, C).
+    See the documentation for interpolator options and interpolators for more details.
+    
+    Args:
+        albedo (torch.Tensor):
+            The per-pixel base color in linear RGB space, used both for diffuse and specular.
+            Defaults to magenta (1.0, 0.0, 1.0).
+            Tensor of shape (..., 3), where (...) should match the pixel batch dimensions in inputs.
+        normal (torch.Tensor):
+            The per-pixel normal in specified space. Defaults to geometry normal.
+            See also ``normal_space``.
+            This can be used to implement per-pixel (neural) normal maps.
+            Tensor of shape (..., 3), where (...) should match the pixel batch dimensions in inputs.
+        emission (torch.Tensor):
+            The per-pixel emission value in linear RGB space.
+            Defaults to black (0.0, 0.0, 0.0) which means no emission.
+            Tensor of shape (..., 3), where (...) should match the pixel batch dimensions in inputs.
+        metallic (torch.Tensor):
+            The per-pixel metallic value.
+            Defaults to 0.0, fully dielectric.
+            Tensor of shape (..., 1), where (...) should match the pixel batch dimensions in inputs.
+        smoothness (torch.Tensor):
+            The per-pixel smoothness value.
+            Defaults to 0.5.
+            Tensor of shape (..., 1), where (...) should match the pixel batch dimensions in inputs.
+        occlusion (torch.Tensor):
+            The per-pixel ambient occlusion value. Dims indirect light.
+            Defaults to 1.0, no occlusion.
+            Tensor of shape (..., 1), where (...) should match the pixel batch dimensions in inputs.
+        alpha (torch.Tensor):
+            The per-pixel alpha value. Linear transparency.
+            Defaults to 1.0, fully opaque.
+            Any value will be overridden to 1.0 if render sessions are executed in ``opaque_only`` mode.
+            Tensor of shape (..., 1), where (...) should match the pixel batch dimensions in inputs.
+        aovs (Dict[str, torch.Tensor]):
+            Auxiliary Output Variables (AOVs).
+            Anything you would like to output for the shader.
+            Batch dimensions of values need to match the pixel batch dimensions in inputs.
+        normal_space(str):
+            | One of 'tangent', 'object' and 'world'.
+            | Defaults to 'tangent' as most normal maps are in tangent space,
+              featuring a 'blueish' look.
+            | 'object' and 'world' spaces are simple.
+            | 'tangent' means (tangent, bitangent, geometry_normal) for XYZ components, respectively,
+              where tangents are typically generated from the UV mapping.
+              See also the ``mikktspace`` plugin.
+    """
     albedo: Optional[torch.Tensor] = None  # F3, base color (diffuse or specular), default to magenta
     normal: Optional[torch.Tensor] = None  # F3, normal in specified space, default to geometry normal
     emission: Optional[torch.Tensor] = None  # F3, default to black
