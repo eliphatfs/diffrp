@@ -1,5 +1,6 @@
 import math
 import numpy
+import torch
 import trimesh
 import calibur
 from typing import Union, List
@@ -23,6 +24,22 @@ class Camera:
         """
         raise NotImplementedError
 
+
+class RawCamera(Camera):
+    def __init__(self, h: int, w: int, v: torch.Tensor, p: torch.Tensor) -> None:
+        self.h = h
+        self.w = w
+        self.v = v
+        self.p = p
+
+    def V(self):
+        return self.v
+
+    def P(self):
+        return self.p
+
+    def resolution(self):
+        return self.h, self.w
 
 class PerspectiveCamera(Camera):
     def __init__(self, fov=30, h=512, w=512, near=0.1, far=10.0) -> None:
