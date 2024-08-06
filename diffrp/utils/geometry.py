@@ -63,3 +63,29 @@ def compute_vertex_normals(verts: torch.Tensor, faces: torch.Tensor):
     vertex_normals = normalized(vertex_normals)
     
     return vertex_normals
+
+
+def sign2d(p1: torch.Tensor, p2: torch.Tensor, p3: torch.Tensor) -> torch.Tensor:
+    """
+    Modified from ``calibur.sign2d``.
+    """
+    return (p1.x - p3.x) * (p2.y - p3.y) - (p2.x - p3.x) * (p1.y - p3.y)
+
+
+def point_in_tri2d(pt: torch.Tensor, v1: torch.Tensor, v2: torch.Tensor, v3: torch.Tensor) -> torch.Tensor:
+    """
+    Decide whether points lie in 2D triangles. Tensors broadcast.
+    Modified from ``calibur.point_in_tri2d``.
+
+    :param pt: ``(..., 2)`` points to decide.
+    :param v1: ``(..., 2)`` first vertex in triangles.
+    :param v2: ``(..., 2)`` second vertex in triangles.
+    :param v3: ``(..., 2)`` third vertex in triangles.
+    :returns: ``(..., 1)`` boolean result of points lie in triangles.
+    """
+    d1 = sign2d(pt, v1, v2)
+    d2 = sign2d(pt, v2, v3)
+    d3 = sign2d(pt, v3, v1)
+    has_neg = (d1 < 0) | (d2 < 0) | (d3 < 0)
+    has_pos = (d1 > 0) | (d2 > 0) | (d3 > 0)
+    return ~(has_neg & has_pos)

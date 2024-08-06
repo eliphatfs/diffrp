@@ -8,10 +8,11 @@ from .camera import Camera
 from ..utils.cache import cached
 from ..utils.shader_ops import *
 from ..utils.colors import linear_to_srgb
+from ..utils.geometry import point_in_tri2d
 from ..scene import Scene, ImageEnvironmentLight
 from ..utils.composite import alpha_blend, alpha_additive
-from .interpolator import FullScreenInterpolator, MaskedSparseInterpolator
 from ..utils.coordinates import unit_direction_to_latlong_uv, near_plane_ndc_grid
+from .interpolator import FullScreenInterpolator, MaskedSparseInterpolator, polyfill_interpolate
 from ..materials.base_material import VertexArrayObject, SurfaceInput, SurfaceUniform, SurfaceOutputStandard
 from ..utils.light_transport import prefilter_env_map, pre_integral_env_brdf, irradiance_integral_env_map, fresnel_schlick_roughness
 
@@ -101,6 +102,57 @@ class SurfaceDeferredRenderSessionOptions:
     def __post_init__(self):
         if self.max_layers <= 0:
             self.max_layers = 32767
+
+
+class EdgeGradient(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx: torch.autograd.function.FunctionCtx, frag_xy, flat_tris_xy, rast, rgb):
+        ctx.save_for_backward(frag_xy, flat_tris_xy, rast, rgb)
+        return rgb
+
+    @staticmethod
+    def backward(ctx: torch.autograd.Function, grad_output):
+        frag_xy, flat_tris_xy, rast, rgb = ctx.saved_tensors
+        # frag: H, W, 2
+        # rgb: H, W, 3
+        # rast: H, W, 4
+        # flat_tris_xy: F, 3, 2
+        tri_idx: torch.IntTensor = rast.w.int()
+        is_unhit = tri_idx == 0
+        scr_tris = flat_tris_xy[tri_idx.squeeze(-1) - 1]
+
+        def _grad_y():
+            # vertical
+            grad_edge: torch.Tensor = -0.5 * dot(grad_output[:-1] + grad_output[1:], rgb[:-1] - rgb[1:])
+            has_edge = tri_idx[:-1] != tri_idx[1:]  # H - 1, W, 1
+            a_in_b = is_unhit[1:] | point_in_tri2d(frag_xy[:-1], *torch.unbind(scr_tris[1:], dim=-2))  # H - 1, W, 1
+            b_in_a = is_unhit[:-1] | point_in_tri2d(frag_xy[1:], *torch.unbind(scr_tris[:-1], dim=-2))
+            grad_a = (has_edge & a_in_b).float() * grad_edge
+            grad_b = (has_edge & b_in_a).float() * grad_edge
+            return (
+                rst.supercat([grad_a, grad_a.new_zeros(1)], dim=0)
+                + rst.supercat([grad_b.new_zeros(1), grad_b], dim=0)
+            )
+        
+        grad_y = _grad_y()
+
+        def _grad_x():
+            # horizontal
+            grad_edge: torch.Tensor = 0.5 * dot(grad_output[:, :-1] + grad_output[:, 1:], rgb[:, :-1] - rgb[:, 1:])
+            has_edge = tri_idx[:, :-1] != tri_idx[:, 1:]
+            a_in_b = is_unhit[:, 1:] | point_in_tri2d(frag_xy[:, :-1], *torch.unbind(scr_tris[:, 1:], dim=-2))
+            b_in_a = is_unhit[:, :-1] | point_in_tri2d(frag_xy[:, 1:], *torch.unbind(scr_tris[:, :-1], dim=-2))
+            grad_a = (has_edge & a_in_b).float() * grad_edge
+            grad_b = (has_edge & b_in_a).float() * grad_edge
+            return (
+                rst.supercat([grad_a, grad_a.new_zeros(1)], dim=1)
+                + rst.supercat([grad_b.new_zeros(1), grad_b], dim=1)
+            )
+
+        grad_x = _grad_x()
+
+        grad_rgb = grad_output.clone()
+        return torch.cat([grad_x, grad_y], dim=-1), None, None, grad_rgb
 
 
 class SurfaceDeferredRenderSession:
@@ -763,3 +815,32 @@ class SurfaceDeferredRenderSession:
         rast = self.rasterize()[0].contiguous()
         vao = self.vertex_array_object()
         return torch.flipud(dr.antialias(rgb, rast, self.clip_space(), vao.tris.contiguous()).squeeze(0))
+
+    def edge_gradient(self, rgb: torch.Tensor):
+        """
+        Applies the edge-gradient technique in
+        *Rasterized Edge Gradients: Handling Discontinuities Differentiably*.
+        This can generate visibility gradients in differentiable rendering.
+
+        The image will be returned as-is in the forward session,
+        but gradients can start flowing through geometry visibility.
+
+        Semi-transparent objects are not well-supported by this operation.
+        
+        Args:
+            rgb (torch.Tensor):
+                Tensor of shape (H, W, 3). RGB image to compute edge gradient with.
+                Must be rendered in this session.
+        Returns:
+            torch.Tensor: the same RGB image, but with gradient operators attached.
+        """
+        rast = self.rasterize()[0].squeeze(0)
+        clip_space = self.clip_space()
+        tris = self.vertex_array_object().tris
+
+        frag = polyfill_interpolate(clip_space, rast, tris, 1.0)
+        frag_xy = frag.xy / frag.w
+
+        flat_tris_xy = (clip_space.xy / clip_space.w)[tris]  # F, 3, 2
+
+        return torch.flipud(EdgeGradient.apply(frag_xy, flat_tris_xy, rast, torch.flipud(rgb)))
