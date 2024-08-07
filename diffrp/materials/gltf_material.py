@@ -49,7 +49,7 @@ class GLTFMaterial(SurfaceMaterial):
         if self.alpha_mode == 'OPAQUE':
             alpha = ones_like_vec(rgba, 1)
         elif self.alpha_mode == 'MASK':
-            alpha = (rgba.a > self.alpha_mode).float()
+            alpha = (rgba.a > self.alpha_cutoff).float()
         elif self.alpha_mode == 'BLEND':
             alpha = rgba.a
         else:
