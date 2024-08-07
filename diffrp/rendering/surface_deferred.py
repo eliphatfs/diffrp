@@ -698,9 +698,41 @@ class SurfaceDeferredRenderSession:
         """
         return self.compose_layers(self.gbuffer_collect(lambda x, y: y.aovs and y.aovs.get(key), bg_value))
 
+    @cached
+    def prepare_ibl(self):
+        opt = self.options
+        prev_pre_levels = None
+        prev_irradiance = None
+        for light in self.scene.lights:
+            if isinstance(light, ImageEnvironmentLight):
+                image_rh = light.image_rh()
+                pre_levels = prefilter_env_map(
+                    image_rh,
+                    deterministic=opt.deterministic,
+                    base_resolution=opt.ibl_specular_base_resolution,
+                    num_levels=opt.ibl_specular_mip_levels,
+                    num_samples=opt.ibl_specular_samples
+                )
+                irradiance = irradiance_integral_env_map(
+                    image_rh,
+                    premip_resolution=opt.ibl_diffuse_sample_resolution,
+                    base_resolution=opt.ibl_diffuse_base_resolution
+                )
+                if prev_pre_levels is not None:
+                    pre_levels = [a + b for a, b in zip(prev_pre_levels, pre_levels)]
+                if prev_irradiance is not None:
+                    irradiance = prev_irradiance + irradiance
+                prev_pre_levels = pre_levels
+                prev_irradiance = irradiance
+        return pre_levels, irradiance
+
+    def set_prepare_ibl(self, cache):
+        if not hasattr(self, '_cache'):
+            self._cache = {}
+        self._cache[SurfaceDeferredRenderSession.prepare_ibl.__qualname__] = cache
+
     def ibl(
         self,
-        light: ImageEnvironmentLight,
         world_normal: torch.Tensor,
         view_dir: torch.Tensor,
         mso: torch.Tensor,
@@ -711,21 +743,8 @@ class SurfaceDeferredRenderSession:
 
         Uses split-sum approximation and pre-filtering techniques.
         """
-        opt = self.options
         env_brdf = pre_integral_env_brdf()
-        image_rh = light.image_rh()
-        pre_levels = prefilter_env_map(
-            image_rh,
-            deterministic=opt.deterministic,
-            base_resolution=opt.ibl_specular_base_resolution,
-            num_levels=opt.ibl_specular_mip_levels,
-            num_samples=opt.ibl_specular_samples
-        )
-        irradiance = irradiance_integral_env_map(
-            image_rh,
-            premip_resolution=opt.ibl_diffuse_sample_resolution,
-            base_resolution=opt.ibl_diffuse_base_resolution
-        )
+        pre_levels, irradiance = self.prepare_ibl()
 
         n_dot_v = torch.relu(dot(world_normal, -view_dir))
         r = reflect(view_dir, world_normal)
@@ -748,24 +767,11 @@ class SurfaceDeferredRenderSession:
         specular = pre_fetch * (f * brdf.x + brdf.y)
         diffuse = irradiance_fetch * albedo * (1.0 - mso.x) * (1 - f)
         return (specular + diffuse) * mso.z
-    
-    def pbr_layer(
-        self,
-        world_normal: torch.Tensor,
-        view_dir: torch.Tensor,
-        mso: torch.Tensor,
-        albedo: torch.Tensor
-    ):
-        render = torch.zeros_like(albedo)
-        for light in self.scene.lights:
-            if isinstance(light, ImageEnvironmentLight):
-                render = render + self.ibl(light, world_normal, view_dir, mso, albedo)
-        return render
 
     @cached
     def pbr_layered(self) -> List[torch.Tensor]:
         return [
-            self.pbr_layer(world_normal, self.view_dir(), mso, albedo)
+            self.ibl(world_normal, self.view_dir(), mso, albedo)
             for world_normal, mso, albedo in zip(
                 self.world_space_normal_layered(),
                 self.mso_layered(),
