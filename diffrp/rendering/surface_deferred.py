@@ -117,6 +117,7 @@ class EdgeGradient(torch.autograd.Function):
         # rgb: H, W, 3
         # rast: H, W, 4
         # flat_tris_xy: F, 3, 2
+        h, w = frag_xy.shape[:2]
         tri_idx: torch.IntTensor = rast.w.int()
         is_unhit = tri_idx == 0
         scr_tris = flat_tris_xy[tri_idx.squeeze(-1) - 1]
@@ -152,7 +153,7 @@ class EdgeGradient(torch.autograd.Function):
         grad_x = _grad_x()
 
         grad_rgb = grad_output.clone()
-        return torch.cat([grad_x, grad_y], dim=-1), None, None, grad_rgb
+        return torch.cat([grad_x * (w / 2), grad_y * (h / 2)], dim=-1), None, None, grad_rgb
 
 
 class SurfaceDeferredRenderSession:
