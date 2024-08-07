@@ -12,6 +12,23 @@ from typing import Optional
 import nvdiffrast.torch as dr
 
 
+@torch.jit.script
+def _interpolate_impl(
+    vertex_buffer: torch.Tensor,
+    vi_data: torch.Tensor,
+    tris: torch.IntTensor,
+    vi_idx: torch.IntTensor,
+    empty_region: Optional[float] = None,
+):
+    v1, v2, v3 = torch.unbind(vertex_buffer[tris[vi_idx - 1]], dim=-2)
+    # v1: *, d
+    u, v = vi_data[..., 0:1], vi_data[..., 1:2]
+    result = v1 * u + v2 * v + v3 * (1 - u - v)
+    if empty_region is not None:
+        result = torch.where(vi_idx[..., None] > 0, result, empty_region)
+    return result
+
+
 def polyfill_interpolate(
     vertex_buffer: torch.Tensor,
     vi_data: torch.Tensor,
@@ -24,12 +41,12 @@ def polyfill_interpolate(
     # v[tris[vi]]: *, 3, d
     if vi_idx is None:
         vi_idx = vi_data.w.int().squeeze(-1)
-    v1, v2, v3 = torch.unbind(vertex_buffer[tris[vi_idx - 1]], dim=-2)
+    # v1, v2, v3 = torch.unbind(vertex_buffer[tris[vi_idx - 1]], dim=-2)
     # v1: *, d
-    result = v1 * vi_data.x + v2 * vi_data.y + v3 * (1 - vi_data.x - vi_data.y)
-    if empty_region is not None:
-        result = torch.where(vi_data.w > 0, result, empty_region)
-    return result
+    # result = v1 * vi_data.x + v2 * vi_data.y + v3 * (1 - vi_data.x - vi_data.y)
+    # if empty_region is not None:
+    #     result = torch.where(vi_data.w > 0, result, empty_region)
+    return _interpolate_impl(vertex_buffer, vi_data, tris, vi_idx, empty_region)
 
 
 class Interpolator(metaclass=abc.ABCMeta):

@@ -179,7 +179,8 @@ def geometry_smith(n: torch.Tensor, v: torch.Tensor, L: torch.Tensor, roughness:
     return ggx1 * ggx2
 
 
-def fresnel_schlick_roughness(cos_theta, f0, roughness):
+@torch.jit.script
+def fresnel_schlick_roughness(cos_theta: torch.Tensor, f0: torch.Tensor, roughness: torch.Tensor):
     return f0 + (torch.maximum(1.0 - roughness, f0) - f0) * (saturate(1.0 - cos_theta) ** 5.0)
 
 

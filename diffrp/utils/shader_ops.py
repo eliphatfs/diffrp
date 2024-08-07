@@ -168,6 +168,31 @@ def transform_vector3x3(xyz, matrix):
     return torch.matmul(xyz, matrix[:-1, :-1].T)
 
 
+@torch.jit.script
+def _sample2d_internal(
+    texture2d: torch.Tensor,
+    texcoords: torch.Tensor,
+    wrap: str = "border",
+    mode: str = "bilinear"
+):
+    texcoords = texcoords.flatten(0, -2)[None, None]
+    align_corners = False
+    if wrap == "latlong":
+        align_corners = True
+        wrap = "reflection"
+    if wrap == "cyclic":
+        texture2d = texture2d.tile(2, 2, 1)
+        texcoords = (texcoords % 1.0) * 0.5
+        texcoords = torch.where(texcoords >= 0.25, texcoords, texcoords + 0.5)
+        wrap = "reflection"
+    texcoords = texcoords * 2 - 1
+    return F.grid_sample(
+        torch.flipud(texture2d)[None].permute(0, 3, 1, 2),
+        texcoords,
+        padding_mode=wrap, mode=mode, align_corners=align_corners
+    ).squeeze(2).squeeze(0).T
+
+
 def sample2d(
     texture2d: torch.Tensor,
     texcoords: torch.Tensor,
@@ -197,24 +222,29 @@ def sample2d(
     # bhwc -> bchw
     # texcoords: ..., 2
     original_shape = texcoords.shape
-    texcoords = texcoords.flatten(0, -2)[None, None]
+    sampled: torch.Tensor = _sample2d_internal(texture2d, texcoords, wrap, mode)
+    # bchw -> wc -> ..., c
+    return sampled.reshape(*original_shape[:-1], texture2d.shape[-1])
+
+
+@torch.jit.script
+def _sample3d_internal(
+    texture3d: torch.Tensor,
+    texcoords: torch.Tensor,
+    wrap: str = "border",
+    mode: str = "bilinear"
+):
+    texcoords = texcoords.flatten(0, -2)[None, None, None]
+    texcoords = texcoords * 2 - 1
     align_corners = False
     if wrap == "latlong":
         align_corners = True
         wrap = "reflection"
-    if wrap == "cyclic":
-        texture2d = texture2d.tile(2, 2, 1)
-        texcoords = (texcoords % 1.0) * 0.5
-        texcoords = torch.where(texcoords >= 0.25, texcoords, texcoords + 0.5)
-        wrap = "reflection"
-    texcoords = texcoords * 2 - 1
-    sampled = F.grid_sample(
-        torch.flipud(texture2d)[None].permute(0, 3, 1, 2),
+    return F.grid_sample(
+        torch.fliplr(texture3d)[None].permute(0, 4, 1, 2, 3),
         texcoords,
         padding_mode=wrap, mode=mode, align_corners=align_corners
-    ).squeeze(2).squeeze(0).T
-    # bchw -> wc -> ..., c
-    return sampled.reshape(*original_shape[:-1], texture2d.shape[-1])
+    ).squeeze(3).squeeze(2).squeeze(0).T
 
 
 def sample3d(
@@ -246,17 +276,7 @@ def sample3d(
     # bdhwc -> bcdhw
     # texcoords: ..., 2
     original_shape = texcoords.shape
-    texcoords = texcoords.flatten(0, -2)[None, None, None]
-    texcoords = texcoords * 2 - 1
-    align_corners = False
-    if wrap == "latlong":
-        align_corners = True
-        wrap = "reflection"
-    sampled = F.grid_sample(
-        torch.fliplr(texture3d)[None].permute(0, 4, 1, 2, 3),
-        texcoords,
-        padding_mode=wrap, mode=mode, align_corners=align_corners
-    ).squeeze(3).squeeze(2).squeeze(0).T
+    sampled: torch.Tensor = _sample3d_internal(texture3d, texcoords, wrap, mode)
     # bcdhw -> wc -> ..., c
     return sampled.reshape(*original_shape[:-1], texture3d.shape[-1])
 
@@ -334,6 +354,9 @@ def floatx(*tensors):
     Example: floatx(rgba.rgb, 1) can give a new RGBA tensor with alpha set to opaque.
     """
     tensors = [x if torch.is_tensor(x) else gpu_f32(x) for x in tensors]
+    ref_shape = tensors[0].shape[:-1]
+    if all(x.shape[:-1] == ref_shape for x in tensors[1:]):
+        return torch.cat(tensors, dim=-1)
     tensors = rst.supercat(tensors, dim=-1)
     return tensors
 
