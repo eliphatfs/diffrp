@@ -1,8 +1,9 @@
 import torch
+from typing import Optional
 from dataclasses import dataclass
 from typing_extensions import Literal
+from ..utils.shader_ops import sample2d
 from .base_material import SurfaceInput, SurfaceMaterial, SurfaceOutputStandard, SurfaceUniform
-from ..utils.shader_ops import sample2d, ones_like_vec
 
 
 @dataclass
@@ -33,10 +34,10 @@ class GLTFMaterial(SurfaceMaterial):
     roughness_factor: float
     metallic_roughness_texture: GLTFSampler
 
-    normal_texture: GLTFSampler
-    occlusion_texture: GLTFSampler
+    normal_texture: Optional[GLTFSampler]
+    occlusion_texture: Optional[GLTFSampler]
 
-    emissive_factor: torch.Tensor  # F3
+    emissive_factor: Optional[torch.Tensor]  # F3
     emissive_texture: GLTFSampler
 
     alpha_cutoff: float
@@ -58,9 +59,9 @@ class GLTFMaterial(SurfaceMaterial):
         return SurfaceOutputStandard(
             rgba.rgb,
             self.normal_texture.sample(si.uv) * 2 - 1 if self.normal_texture is not None else None,
-            self.emissive_factor * self.emissive_texture.sample(si.uv),
+            self.emissive_factor * self.emissive_texture.sample(si.uv) if self.emissive_factor is not None else None,
             self.metallic_factor * mr.b,
             1.0 - self.roughness_factor * mr.g,
-            self.occlusion_texture.sample(si.uv).r,
+            self.occlusion_texture.sample(si.uv).r if self.occlusion_texture is not None else None,
             alpha
         )

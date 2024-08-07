@@ -30,9 +30,9 @@ def to_gltf_material(verts: torch.Tensor, visual):
         1.0, 1.0,
         GLTFSampler(white_tex()),
         None,
-        GLTFSampler(white_tex()),
-        gpu_f32([0, 0, 0]),
-        GLTFSampler(black_tex().rgb),
+        None,
+        None,
+        GLTFSampler(white_tex().rgb),
         0.5, 'OPAQUE'
     )
     color = ones_like_vec(verts, 4)
@@ -63,8 +63,8 @@ def to_gltf_material(verts: torch.Tensor, visual):
             default_mat.normal_texture = GLTFSampler(nm)
         if mat.occlusionTexture is not None:
             occ = gpu_f32(numpy.array(mat.occlusionTexture.convert("RGB"))) / 255.0
-            default_mat.occlusion_texture.image = occ
-        if mat.emissiveFactor is not None:
+            default_mat.occlusion_texture = GLTFSampler(occ)
+        if mat.emissiveFactor is not None and (mat.emissiveFactor > 0).any():
             default_mat.emissive_factor = gpu_f32(mat.emissiveFactor)
         if mat.emissiveTexture is not None:
             emit = gpu_f32(numpy.array(mat.emissiveTexture.convert("RGB"))) / 255.0
