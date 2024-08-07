@@ -267,9 +267,8 @@ class SurfaceDeferredRenderSession:
             torch.Tensor: Tensor of shape (V, 4).
         """
         vao = self.vertex_array_object()
-        camera = self.camera
-        v = camera.V()
-        p = camera.P()
+        v = self.camera_V()
+        p = self.camera_P()
         return transform_point(vao.world_pos, p @ v).contiguous()
     
     @cached
@@ -310,17 +309,19 @@ class SurfaceDeferredRenderSession:
         m_layers: List[List[Tuple[SurfaceInput, SurfaceOutputStandard]]] = []
         vao = self.vertex_array_object()
         r_layers = self.rasterize()
-        cam = self.camera
+        cam_v = self.camera_V()
+        cam_p = self.camera_P()
         for rast in r_layers:
             mats = []
             if self.options.intepolator_impl == 'stencil_masked':
-                stencil_buf = vao.stencils[rast.a.int().squeeze(-1)]
+                vi_idx = rast.a.int().squeeze(-1)
+                stencil_buf = vao.stencils[vi_idx]
             for pi, x in enumerate(self.scene.objects):
-                su = SurfaceUniform(x.M, cam.V(), cam.P())
+                su = SurfaceUniform(x.M, cam_v, cam_p)
                 if self.options.intepolator_impl == 'full_screen':
                     si = SurfaceInput(su, vao, FullScreenInterpolator(rast, vao.tris))
                 elif self.options.intepolator_impl == 'stencil_masked':
-                    si = SurfaceInput(su, vao, MaskedSparseInterpolator(rast, vao.tris, stencil_buf == pi + 1))
+                    si = SurfaceInput(su, vao, MaskedSparseInterpolator(rast, vao.tris, stencil_buf == pi + 1, vi_idx))
                     if len(si.interpolator.indices[0]) == 0:
                         mats.append((si, SurfaceOutputStandard()))
                         continue
@@ -328,6 +329,14 @@ class SurfaceDeferredRenderSession:
                 mats.append((si, so))
             m_layers.append(mats)
         return m_layers
+    
+    @cached
+    def camera_P(self):
+        return self.camera.P()
+    
+    @cached
+    def camera_V(self):
+        return self.camera.V()
 
     def gbuffer_collect(
         self,
@@ -373,8 +382,10 @@ class SurfaceDeferredRenderSession:
                 values = []
                 nind = 0
                 for si, so in mats:
-                    op = operator(si, so)
                     interpolator: MaskedSparseInterpolator = si.interpolator
+                    if len(si.interpolator.indices[0]) == 0:
+                        continue
+                    op = operator(si, so)
                     if op is not None:
                         nind = len(interpolator.indices)
                         indices.append(interpolator.indices)
@@ -506,10 +517,8 @@ class SurfaceDeferredRenderSession:
                 Tensor of shape (H, W, 3).
         """
         grid = near_plane_ndc_grid(*self.camera.resolution(), torch.float32, 'cuda')
-        grid = transform_point(grid, torch.linalg.inv(self.camera.P()))
-        grid = grid.xyz / grid.w
-        camera_matrix = torch.linalg.inv(self.camera.V())
-        grid = transform_point(grid, camera_matrix)
+        camera_matrix = torch.linalg.inv(self.camera_V())
+        grid = torch.matmul(grid, (camera_matrix @ torch.linalg.inv(self.camera_P())).T)
         grid = grid.xyz / grid.w
         return normalized(grid - camera_matrix[:3, 3])
 
@@ -719,7 +728,7 @@ class SurfaceDeferredRenderSession:
                     base_resolution=opt.ibl_diffuse_base_resolution
                 )
                 if prev_pre_levels is not None:
-                    pre_levels = [a + b for a, b in zip(prev_pre_levels, pre_levels)]
+                    pre_levels = prev_pre_levels + pre_levels
                 if prev_irradiance is not None:
                     irradiance = prev_irradiance + irradiance
                 prev_pre_levels = pre_levels
@@ -748,24 +757,21 @@ class SurfaceDeferredRenderSession:
 
         n_dot_v = torch.relu(dot(world_normal, -view_dir))
         r = reflect(view_dir, world_normal)
-        r_uv = float2(*unit_direction_to_latlong_uv(r))
         n_uv = float2(*unit_direction_to_latlong_uv(world_normal))
 
-        pre_lod = (len(pre_levels) - 1) * saturate(1 - mso.y)
-        pre_fetch = 0
-        for i, level in enumerate(pre_levels):
-            pre_level = torch.relu(sample2d(level, r_uv, 'latlong'))
-            pre_weight = torch.relu(1 - torch.abs(pre_lod - i))
-            pre_fetch = pre_fetch + pre_level * pre_weight
+        metal = mso.x
+        rough = 1 - mso.y
+        r_uvm = float3(*unit_direction_to_latlong_uv(r), rough)
+        pre_fetch = sample3d(pre_levels, r_uvm, 'latlong')
 
         brdf = sample2d(env_brdf, float2(n_dot_v, mso.y))
         irradiance_fetch = sample2d(irradiance, n_uv, 'latlong')
 
-        f0 = 0.04 * (1.0 - mso.x) + albedo * mso.x
-        f = fresnel_schlick_roughness(n_dot_v, f0, 1 - mso.y)
+        f0 = torch.lerp(albedo.new_full([3], 0.04), albedo, metal)  # 0.04 * (1.0 - metal) + albedo * metal
+        f = fresnel_schlick_roughness(n_dot_v, f0, rough)
 
         specular = pre_fetch * (f * brdf.x + brdf.y)
-        diffuse = irradiance_fetch * albedo * (1.0 - mso.x) * (1 - f)
+        diffuse = irradiance_fetch * albedo * (1.0 - metal) * (1 - f)
         return (specular + diffuse) * mso.z
 
     @cached
@@ -795,7 +801,10 @@ class SurfaceDeferredRenderSession:
         for light in self.scene.lights:
             if isinstance(light, ImageEnvironmentLight) and light.render_skybox:
                 any_skybox = True
-                skybox = skybox + sample2d(light.image_rh(), float2(*unit_direction_to_latlong_uv(self.view_dir())))
+                skybox = skybox + sample2d(
+                    light.image_rh(),
+                    float2(*unit_direction_to_latlong_uv(self.view_dir()))
+                )
         if any_skybox:
             return self.compose_layers(
                 self.pbr_layered() + [skybox],

@@ -200,7 +200,6 @@ def sample2d(
     texcoords = texcoords.flatten(0, -2)[None, None]
     align_corners = False
     if wrap == "latlong":
-        texcoords = float2(texcoords.x % 1.0, texcoords.y)
         align_corners = True
         wrap = "reflection"
     if wrap == "cyclic":
@@ -249,10 +248,14 @@ def sample3d(
     original_shape = texcoords.shape
     texcoords = texcoords.flatten(0, -2)[None, None, None]
     texcoords = texcoords * 2 - 1
+    align_corners = False
+    if wrap == "latlong":
+        align_corners = True
+        wrap = "reflection"
     sampled = F.grid_sample(
         torch.fliplr(texture3d)[None].permute(0, 4, 1, 2, 3),
         texcoords,
-        padding_mode=wrap, mode=mode, align_corners=False
+        padding_mode=wrap, mode=mode, align_corners=align_corners
     ).squeeze(3).squeeze(2).squeeze(0).T
     # bcdhw -> wc -> ..., c
     return sampled.reshape(*original_shape[:-1], texture3d.shape[-1])

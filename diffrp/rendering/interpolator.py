@@ -16,12 +16,15 @@ def polyfill_interpolate(
     vertex_buffer: torch.Tensor,
     vi_data: torch.Tensor,
     tris: torch.IntTensor,
-    empty_region: Optional[float] = None
+    empty_region: Optional[float] = None,
+    vi_idx: Optional[torch.IntTensor] = None
 ):
     # n, d; f, 3; *, 4 -> *, d
     # tris[vi]: *, 3
     # v[tris[vi]]: *, 3, d
-    v1, v2, v3 = torch.unbind(vertex_buffer[tris[vi_data.w.int().squeeze(-1) - 1]], dim=-2)
+    if vi_idx is None:
+        vi_idx = vi_data.w.int().squeeze(-1)
+    v1, v2, v3 = torch.unbind(vertex_buffer[tris[vi_idx - 1]], dim=-2)
     # v1: *, d
     result = v1 * vi_data.x + v2 * vi_data.y + v3 * (1 - vi_data.x - vi_data.y)
     if empty_region is not None:
@@ -50,11 +53,12 @@ class FullScreenInterpolator(Interpolator):
 
 class MaskedSparseInterpolator(Interpolator):
     
-    def __init__(self, vi_data: torch.Tensor, tris: torch.IntTensor, mask: torch.BoolTensor):
+    def __init__(self, vi_data: torch.Tensor, tris: torch.IntTensor, mask: torch.BoolTensor, vi_idx: torch.IntTensor):
         self.tris = tris
         self.indices = mask.nonzero(as_tuple=True)
         self.vi_data = vi_data[self.indices]  # (u, v, z|depth, tridx)
+        self.vi_idx = vi_idx[self.indices]
 
     def interpolate(self, vertex_buffer: torch.Tensor):
         # n, d; f, 3; ?, 4
-        return polyfill_interpolate(vertex_buffer, self.vi_data, self.tris)
+        return polyfill_interpolate(vertex_buffer, self.vi_data, self.tris, vi_idx=self.vi_idx)

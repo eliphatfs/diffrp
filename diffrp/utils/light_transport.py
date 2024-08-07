@@ -133,8 +133,10 @@ def prefilter_env_map(
         weights = n_dot_L.sum(0)
 
         values = torch.einsum('nhwc,nhw->hwc', values, n_dot_L.squeeze(-1))
-        levels.append(values / (weights + 1e-4))
-    return levels
+        values = values / (weights + 1e-4) 
+        values = to_hwc(F.interpolate(to_bchw(values), [base_resolution, base_resolution * 2], mode='bilinear', align_corners=True))
+        levels.append(values)
+    return torch.stack(levels)
 
 
 def irradiance_integral_env_map(
