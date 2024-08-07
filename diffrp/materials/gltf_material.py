@@ -47,7 +47,7 @@ class GLTFMaterial(SurfaceMaterial):
         mr = self.metallic_roughness_texture.sample(si.uv)
 
         if self.alpha_mode == 'OPAQUE':
-            alpha = ones_like_vec(rgba, 1)
+            alpha = None
         elif self.alpha_mode == 'MASK':
             alpha = (rgba.a > self.alpha_cutoff).float()
         elif self.alpha_mode == 'BLEND':
@@ -57,7 +57,7 @@ class GLTFMaterial(SurfaceMaterial):
 
         return SurfaceOutputStandard(
             rgba.rgb,
-            self.normal_texture.sample(si.uv) * 2 - 1,
+            self.normal_texture.sample(si.uv) * 2 - 1 if self.normal_texture is not None else None,
             self.emissive_factor * self.emissive_texture.sample(si.uv),
             self.metallic_factor * mr.b,
             1.0 - self.roughness_factor * mr.g,

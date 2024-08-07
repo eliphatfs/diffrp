@@ -29,7 +29,7 @@ def to_gltf_material(verts: torch.Tensor, visual):
         GLTFSampler(white_tex()),
         1.0, 1.0,
         GLTFSampler(white_tex()),
-        GLTFSampler(empty_normal_tex()),
+        None,
         GLTFSampler(white_tex()),
         gpu_f32([0, 0, 0]),
         GLTFSampler(black_tex().rgb),
@@ -60,7 +60,7 @@ def to_gltf_material(verts: torch.Tensor, visual):
             default_mat.metallic_roughness_texture.image = mr
         if mat.normalTexture is not None:
             nm = gpu_f32(numpy.array(mat.normalTexture.convert("RGB"))) / 255.0
-            default_mat.normal_texture.image = nm
+            default_mat.normal_texture = GLTFSampler(nm)
         if mat.occlusionTexture is not None:
             occ = gpu_f32(numpy.array(mat.occlusionTexture.convert("RGB"))) / 255.0
             default_mat.occlusion_texture.image = occ
