@@ -437,6 +437,8 @@ class SurfaceDeferredRenderSession:
             alphas = self.alpha_layered()
         if blend_fn is None:
             blend_fn = alpha_blend
+        if len(colors) == 0:
+            return torch.zeros(*self.camera.resolution(), 4, dtype=torch.float32, device='cuda')
         frame_buffer = colors[-1]
         frame_alpha = alphas[-1]
         for g, a in zip(reversed(colors[:-1]), reversed(alphas[:-1])):
