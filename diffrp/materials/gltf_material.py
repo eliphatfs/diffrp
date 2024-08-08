@@ -2,7 +2,7 @@ import torch
 from typing import Optional
 from dataclasses import dataclass
 from typing_extensions import Literal
-from ..utils.shader_ops import sample2d, fsa
+from ..utils.shader_ops import sample2d, fsa, ones_like_vec
 from .base_material import SurfaceInput, SurfaceMaterial, SurfaceOutputStandard, SurfaceUniform
 
 
@@ -62,6 +62,6 @@ class GLTFMaterial(SurfaceMaterial):
             self.emissive_factor * self.emissive_texture.sample(si.uv) if self.emissive_factor is not None else None,
             self.metallic_factor * mr.b,
             fsa(-self.roughness_factor, mr.g, 1.0),
-            self.occlusion_texture.sample(si.uv).r if self.occlusion_texture is not None else None,
+            self.occlusion_texture.sample(si.uv).r if self.occlusion_texture is not None else ones_like_vec(si.uv, 1),
             alpha
         )

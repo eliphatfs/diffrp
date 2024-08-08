@@ -212,36 +212,36 @@ class SurfaceDeferredRenderSession:
 
     def _checked_cat(self, attrs: List[torch.Tensor], verts_ref: List[torch.Tensor], expected_dim):
         for v, a in zip(verts_ref, attrs):
-            assert len(v) == len(a), "attribute length not the same as number of vertices"
+            assert v.shape[0] == a.shape[0], "attribute length not the same as number of vertices"
             if isinstance(expected_dim, int):
-                assert a.size(-1) == expected_dim, "expected %d dims but got %d for vertex attribute" % (expected_dim, a.size(-1))
+                assert a.shape[-1] == expected_dim, "expected %d dims but got %d for vertex attribute" % (expected_dim, a.shape[-1])
         return torch.cat(attrs)
 
     @cached
     def vertex_array_object(self) -> VertexArrayObject:
         world_pos = []
         tris = []
-        sts = [torch.full([1], 0, device='cuda', dtype=torch.int16)]
+        sts = [torch.full([1], 0, device='cuda', dtype=torch.int64)]
         objs = self.scene.objects
         offset = 0
         for s, x in enumerate(objs):
             world_pos.append(transform_point4x3(x.verts, x.M))
-            assert x.tris.size(-1) == 3, "Expected 3 vertices per triangle, got %d" % x.tris.size(-1)
+            assert x.tris.shape[-1] == 3, "Expected 3 vertices per triangle, got %d" % x.tris.shape[-1]
             tris.append(x.tris + offset)
-            sts.append(torch.full([len(x.tris)], s + 1, dtype=torch.int16, device=x.tris.device))
+            sts.append(torch.full([len(x.tris)], s + 1, dtype=torch.int64, device=x.tris.device))
             offset += len(x.verts)
         total_custom_attrs = set().union(*(obj.custom_attrs.keys() for obj in objs))
         for k in total_custom_attrs:
             for obj in objs:
                 if k in obj.custom_attrs:
-                    sz = obj.custom_attrs[k].size(-1)
+                    sz = obj.custom_attrs[k].shape[-1]
                     break
             else:
                 assert False, "Internal assertion failure. You should never reach here."
             for obj in objs:
                 if k in obj.custom_attrs:
                     assert len(obj.custom_attrs[k]) == len(obj.verts), "Attribute length not the same as number of vertices: %s" % k
-                    assert obj.custom_attrs[k].size(-1) == sz, "Different dimensions for same custom attribute: %d != %d" % (obj.custom_attrs[k].size(-1), sz)
+                    assert obj.custom_attrs[k].shape[-1] == sz, "Different dimensions for same custom attribute: %d != %d" % (obj.custom_attrs[k].shape[-1], sz)
                 else:
                     obj.custom_attrs[k] = zeros_like_vec(obj.verts, sz)
 
@@ -250,8 +250,8 @@ class SurfaceDeferredRenderSession:
             self._checked_cat([obj.verts for obj in objs], verts_ref, 3),
             self._checked_cat([obj.normals for obj in objs], verts_ref, 3),
             torch.cat(world_pos),
-            torch.cat(tris).int().contiguous(),
-            torch.cat(sts).short().contiguous(),
+            torch.cat(tris).int(memory_format=torch.contiguous_format),
+            torch.cat(sts).int(memory_format=torch.contiguous_format),
             self._checked_cat([obj.color for obj in objs], verts_ref, None),
             self._checked_cat([obj.uv for obj in objs], verts_ref, 2),
             self._checked_cat([obj.tangents for obj in objs], verts_ref, 4),
@@ -312,14 +312,14 @@ class SurfaceDeferredRenderSession:
         for rast in r_layers:
             mats = []
             if self.options.intepolator_impl == 'stencil_masked':
-                vi_idx = rast.a.int().squeeze(-1)
+                vi_idx = rast[..., -1].long()
                 stencil_buf = vao.stencils[vi_idx]
             for pi, x in enumerate(self.scene.objects):
                 su = SurfaceUniform(x.M, cam_v, cam_p)
                 if self.options.intepolator_impl == 'full_screen':
                     si = SurfaceInput(su, vao, FullScreenInterpolator(rast, vao.tris))
                 elif self.options.intepolator_impl == 'stencil_masked':
-                    si = SurfaceInput(su, vao, MaskedSparseInterpolator(rast, vao.tris, stencil_buf == pi + 1, vi_idx))
+                    si = SurfaceInput(su, vao, MaskedSparseInterpolator(rast, vao.tris, stencil_buf == pi + 1))
                     if len(si.interpolator.indices[0]) == 0:
                         mats.append((si, SurfaceOutputStandard()))
                         continue
@@ -382,7 +382,7 @@ class SurfaceDeferredRenderSession:
                         stencil_lookup.append(len(buffer))
                         buffer.append(op)
                 stencil_lookup = vao.stencils.new_tensor(stencil_lookup)
-                gbuffers.append(torch.gather(torch.cat(buffer), 0, stencil_lookup[vao.stencils.int()][rast.a.int()].repeat_interleave(len(default), dim=-1).long()))
+                gbuffers.append(torch.gather(torch.cat(buffer), 0, stencil_lookup[vao.stencils][rast.a.long()].repeat_interleave(len(default), dim=-1).long()))
             elif self.options.intepolator_impl == 'stencil_masked':
                 buffer = defaults
                 indices = []
@@ -520,12 +520,12 @@ class SurfaceDeferredRenderSession:
         return self.gbuffer_collect(lambda x, y: x.local_pos, [0., 0., 0.])
     
     @staticmethod
-    @torch.jit.script
-    def _view_dir_impl(grid, v, vp):
-        camera_matrix = inv4x4(v)
-        grid = torch.matmul(grid, inv4x4(vp).T)
+    def _view_dir_impl(grid: torch.Tensor, v: torch.Tensor, vp: torch.Tensor):
+        inved_matrices = small_matrix_inverse(torch.stack([v, vp]))
+        camera_pos = inved_matrices[0, :3, 3]
+        grid = torch.matmul(grid, inved_matrices[1].T)
         grid = grid[..., :3] / grid[..., 3:]
-        return normalized(grid - camera_matrix[:3, 3])
+        return normalized(grid - camera_pos)
 
     @cached
     def view_dir(self) -> torch.Tensor:
@@ -535,7 +535,7 @@ class SurfaceDeferredRenderSession:
                 Full-screen unit direction vectors of outbound rays from the camera.
                 Tensor of shape (H, W, 3).
         """
-        grid = near_plane_ndc_grid(*self.camera.resolution(), torch.float32, 'cuda')
+        grid = near_plane_ndc_grid(*self.camera.resolution(), torch.float32, torch.device('cuda'))
         return self._view_dir_impl(grid, self.camera_V(), self.camera_VP())
 
     @cached

@@ -185,14 +185,25 @@ def transform_vector3x3(xyz, matrix):
     return torch.matmul(xyz, matrix[:-1, :-1].T)
 
 
+@singleton_cached
+def flipper_2d():
+    return gpu_f32([1, -1])
+
+
+@singleton_cached
+def flipper_3d():
+    return gpu_f32([1, -1, 1])
+
+
 @torch.jit.script
 def _sample2d_internal(
     texture2d: torch.Tensor,
     texcoords: torch.Tensor,
+    flipper: torch.Tensor,
     wrap: str = "border",
     mode: str = "bilinear"
 ):
-    texcoords = texcoords.flatten(0, -2)[None, None]
+    texcoords = texcoords.reshape(1, 1, -1, texcoords.shape[-1])
     align_corners = False
     if wrap == "latlong":
         align_corners = True
@@ -202,12 +213,12 @@ def _sample2d_internal(
         texcoords = (texcoords % 1.0) * 0.5
         texcoords = torch.where(texcoords >= 0.25, texcoords, texcoords + 0.5)
         wrap = "reflection"
-    texcoords = texcoords * 2 - 1
+    texcoords = (texcoords * 2 - 1) * flipper
     return F.grid_sample(
-        torch.flipud(texture2d)[None].permute(0, 3, 1, 2),
+        texture2d[None].permute(0, 3, 1, 2),
         texcoords,
         padding_mode=wrap, mode=mode, align_corners=align_corners
-    ).squeeze(2).squeeze(0).T
+    ).view(texture2d.shape[-1], -1).T
 
 
 def sample2d(
@@ -239,7 +250,7 @@ def sample2d(
     # bhwc -> bchw
     # texcoords: ..., 2
     original_shape = texcoords.shape
-    sampled: torch.Tensor = _sample2d_internal(texture2d, texcoords, wrap, mode)
+    sampled: torch.Tensor = _sample2d_internal(texture2d, texcoords, flipper_2d(), wrap, mode)
     # bchw -> wc -> ..., c
     return sampled.reshape(*original_shape[:-1], texture2d.shape[-1])
 
@@ -248,20 +259,21 @@ def sample2d(
 def _sample3d_internal(
     texture3d: torch.Tensor,
     texcoords: torch.Tensor,
+    flipper: torch.Tensor,
     wrap: str = "border",
     mode: str = "bilinear"
 ):
-    texcoords = texcoords.flatten(0, -2)[None, None, None]
-    texcoords = texcoords * 2 - 1
+    texcoords = texcoords.reshape(1, 1, 1, -1, texcoords.shape[-1])
+    texcoords = (texcoords * 2 - 1) * flipper
     align_corners = False
     if wrap == "latlong":
         align_corners = True
         wrap = "reflection"
     return F.grid_sample(
-        torch.fliplr(texture3d)[None].permute(0, 4, 1, 2, 3),
+        texture3d[None].permute(0, 4, 1, 2, 3),
         texcoords,
         padding_mode=wrap, mode=mode, align_corners=align_corners
-    ).squeeze(3).squeeze(2).squeeze(0).T
+    ).view(texture3d.shape[-1], -1).T
 
 
 def sample3d(
@@ -293,7 +305,7 @@ def sample3d(
     # bdhwc -> bcdhw
     # texcoords: ..., 2
     original_shape = texcoords.shape
-    sampled: torch.Tensor = _sample3d_internal(texture3d, texcoords, wrap, mode)
+    sampled: torch.Tensor = _sample3d_internal(texture3d, texcoords, flipper_3d(), wrap, mode)
     # bcdhw -> wc -> ..., c
     return sampled.reshape(*original_shape[:-1], texture3d.shape[-1])
 
@@ -563,6 +575,27 @@ def empty_normal_tex():
     return gpu_f32(numpy.full([16, 16, 3], [0.5, 0.5, 1.0], dtype=numpy.float32))
 
 
+class SmallMatrixInverse(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx: torch.autograd.function.FunctionCtx, matrix: torch.Tensor):
+        output = matrix.new_tensor(numpy.linalg.inv(matrix.detach().cpu().numpy()))
+        ctx.save_for_backward(output)
+        return output
+
+    @staticmethod
+    def backward(ctx: torch.autograd.Function, grad_output: torch.Tensor):
+        output, = ctx.saved_tensors
+        output = output.transpose(-1, -2)
+        return -output @ grad_output @ output
+
+
+def small_matrix_inverse(x: torch.Tensor) -> torch.Tensor:
+    """
+    Faster inverse for matrices smaller than 2x8x8.
+    """
+    return SmallMatrixInverse.apply(x)
+
+
 def _make_attr(attr: str, idx: str):
     catlist = [idx.index(c) for c in attr]
     for s in range(1, 4):
@@ -589,14 +622,6 @@ if hasattr(torch.linalg, 'cross'):
 else:
     def cross(a: torch.Tensor, b: torch.Tensor):
         return torch.cross(a, b, dim=-1)
-
-
-if hasattr(torch.linalg, 'inv_ex'):
-    def inv4x4(a: torch.Tensor):
-        return torch.linalg.inv_ex(a)[0]
-else:
-    def inv4x4(a: torch.Tensor):
-        return torch.linalg.inv(a)
 
 
 indices = ['xyzw', 'rgba']

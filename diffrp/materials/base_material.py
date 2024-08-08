@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from typing_extensions import Literal
 from ..utils.cache import cached, key_cached
 from ..rendering.interpolator import Interpolator
-from ..utils.shader_ops import float4, normalized, transform_point4x3, transform_vector3x3, inv4x4
+from ..utils.shader_ops import float4, normalized, transform_point4x3, transform_vector3x3, small_matrix_inverse
 
 
 @dataclass
@@ -23,7 +23,7 @@ class VertexArrayObject:
 
     # index buffers
     tris: torch.IntTensor
-    stencils: torch.ShortTensor
+    stencils: torch.IntTensor
     # REVIEW: this seems coupled with implementation details of render pipelines
     # can we make this only for the material?
     
@@ -62,7 +62,7 @@ class SurfaceUniform:
         Returns:
             torch.Tensor: The camera matrix, commonly referred to as ``c2w``. Tensor of shape (4, 4).
         """
-        return inv4x4(self.V)
+        return small_matrix_inverse(self.V)
 
     @property
     @cached

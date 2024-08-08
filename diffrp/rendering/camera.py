@@ -29,7 +29,7 @@ class Camera:
                 | It should be an affine transform matrix with the last row fixed to [0, 0, 0, 1].
                   It is also often called an extrinsic matrix or w2c matrix in other conventions.
         """
-        return gpu_f32(trimesh.transformations.inverse_matrix(self.t))
+        return gpu_f32(trimesh.transformations.inverse_matrix(self.t).astype(numpy.float32))
 
     def P(self):
         """
