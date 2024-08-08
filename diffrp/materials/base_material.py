@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from typing_extensions import Literal
 from ..utils.cache import cached, key_cached
 from ..rendering.interpolator import Interpolator
-from ..utils.shader_ops import float4, normalized, transform_point4x3, transform_vector3x3
+from ..utils.shader_ops import float4, normalized, transform_point4x3, transform_vector3x3, inv4x4
 
 
 @dataclass
@@ -62,7 +62,7 @@ class SurfaceUniform:
         Returns:
             torch.Tensor: The camera matrix, commonly referred to as ``c2w``. Tensor of shape (4, 4).
         """
-        return torch.linalg.inv(self.V)
+        return inv4x4(self.V)
 
     @property
     @cached

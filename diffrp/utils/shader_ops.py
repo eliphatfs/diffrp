@@ -591,6 +591,14 @@ else:
         return torch.cross(a, b, dim=-1)
 
 
+if hasattr(torch.linalg, 'inv_ex'):
+    def inv4x4(a: torch.Tensor):
+        return torch.linalg.inv_ex(a)[0]
+else:
+    def inv4x4(a: torch.Tensor):
+        return torch.linalg.inv(a)
+
+
 indices = ['xyzw', 'rgba']
 for idx in indices:
     comb = [''.join(x) for x in itertools.product([''] + list(idx), repeat=len(idx))]

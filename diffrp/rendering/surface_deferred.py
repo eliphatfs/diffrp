@@ -522,8 +522,8 @@ class SurfaceDeferredRenderSession:
     @staticmethod
     @torch.jit.script
     def _view_dir_impl(grid, v, vp):
-        camera_matrix = torch.linalg.inv(v)
-        grid = torch.matmul(grid, torch.linalg.inv(vp).T)
+        camera_matrix = inv4x4(v)
+        grid = torch.matmul(grid, inv4x4(vp).T)
         grid = grid[..., :3] / grid[..., 3:]
         return normalized(grid - camera_matrix[:3, 3])
 
