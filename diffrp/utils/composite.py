@@ -20,7 +20,7 @@ def background_alpha_compose(bg: Union[torch.Tensor, List[Union[float, int]], fl
         torch.Tensor: Composed result, shape (..., C).
     """
     fgc, fga = split_alpha(fgca)
-    if not torch.is_tensor(bg):
+    if not isinstance(bg, (float, int)) and not torch.is_tensor(bg):
         bg = fgca.new_tensor(bg)
     return fgc * fga + bg * (1 - fga)
 
