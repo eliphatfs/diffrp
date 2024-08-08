@@ -11,7 +11,7 @@ class AgxLutLoader:
     """
     @key_cached
     def load(self, variant: str) -> torch.Tensor:
-        return torch.load(get_resource_path("luts/agx-%s.pt" % variant))
+        return torch.load(get_resource_path("luts/agx-%s.pt" % variant)).cuda()
 
 
 agx_lut_loader = AgxLutLoader()

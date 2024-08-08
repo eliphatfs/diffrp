@@ -16,8 +16,8 @@ import nvdiffrast.torch as dr
 def _interpolate_impl(
     vertex_buffer: torch.Tensor,
     vi_data: torch.Tensor,
-    tris: torch.IntTensor,
-    vi_idx: torch.IntTensor,
+    tris: torch.Tensor,
+    vi_idx: torch.Tensor,
     empty_region: Optional[float] = None,
 ):
     v1, v2, v3 = torch.unbind(vertex_buffer[tris[vi_idx - 1]], dim=-2)
