@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from typing import Optional
 from .cache import singleton_cached
 from .coordinates import angles_to_unit_direction, unit_direction_to_latlong_uv, latlong_grid
-from .shader_ops import normalized, float2, float3, cross, dot, sample2d, to_bchw, to_hwc, saturate, sample3d
+from .shader_ops import normalized, float2, float3, cross, dot, sample2d, to_bchw, to_hwc, saturate, sample3d, fma
 
 
 @torch.jit.script
@@ -179,7 +179,6 @@ def geometry_smith(n: torch.Tensor, v: torch.Tensor, L: torch.Tensor, roughness:
     return ggx1 * ggx2
 
 
-@torch.jit.script
 def fresnel_schlick_roughness(cos_theta: torch.Tensor, f0: torch.Tensor, roughness: torch.Tensor):
     return f0 + (torch.maximum(1.0 - roughness, f0) - f0) * (saturate(1.0 - cos_theta) ** 5.0)
 

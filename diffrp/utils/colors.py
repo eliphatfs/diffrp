@@ -1,4 +1,5 @@
 import torch
+from .shader_ops import fsa
 
 
 def linear_to_srgb(rgb: torch.Tensor) -> torch.Tensor:
@@ -10,7 +11,7 @@ def linear_to_srgb(rgb: torch.Tensor) -> torch.Tensor:
     """
     if torch.is_grad_enabled():
         rgb = torch.clamp_min(rgb, 1e-5)
-    return torch.where(rgb < 0.0031308, 12.92 * rgb, 1.055 * rgb ** (1 / 2.4) - 0.055)
+    return torch.where(rgb < 0.0031308, 12.92 * rgb, fsa(1.055, rgb ** (1 / 2.4), -0.055))
 
 
 def srgb_to_linear(rgb: torch.Tensor) -> torch.Tensor:
@@ -70,7 +71,7 @@ def linear_to_alexa_logc_ei1000(x):
     d = 0.385537
     e = 5.367655
     f = 0.092809
-    return torch.where(x > cut, c * torch.log10(a * x + b) + d, e * x + f)
+    return torch.where(x > cut, fsa(c, torch.log10(fsa(a, x, b)), d), fsa(e, x, f))
 
 
 def alexa_logc_ei1000_to_linear(logc):

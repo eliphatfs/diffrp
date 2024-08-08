@@ -11,7 +11,7 @@ class AgxLutLoader:
     """
     @key_cached
     def load(self, variant: str) -> torch.Tensor:
-        return torch.load(get_resource_path("luts/agx-%s.pt" % variant)).cuda()
+        return torch.fliplr(torch.load(get_resource_path("luts/agx-%s.pt" % variant)).cuda()).contiguous()
 
 
 agx_lut_loader = AgxLutLoader()
@@ -31,4 +31,4 @@ def agx_base_contrast(rgb: torch.Tensor):
     lut = lut.to(rgb)  # z y x 3
     logc = linear_to_alexa_logc_ei1000(rgb)  # h w 3
     # sampled: 1 c 1 h w
-    return linear_to_srgb(sample3d(torch.fliplr(lut), logc))
+    return linear_to_srgb(sample3d(lut, logc))

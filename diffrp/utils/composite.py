@@ -1,6 +1,6 @@
 import torch
 from typing import Union, List
-from .shader_ops import saturate, split_alpha, to_bchw, to_hwc
+from .shader_ops import saturate, split_alpha, to_bchw, to_hwc, fma
 
 
 def background_alpha_compose(bg: Union[torch.Tensor, List[Union[float, int]], float, int], fgca: torch.Tensor):
@@ -20,13 +20,13 @@ def background_alpha_compose(bg: Union[torch.Tensor, List[Union[float, int]], fl
         torch.Tensor: Composed result, shape (..., C).
     """
     fgc, fga = split_alpha(fgca)
-    if not isinstance(bg, (float, int)) and not torch.is_tensor(bg):
+    if not isinstance(bg, (float, int)) and not isinstance(bg, torch.Tensor):
         bg = fgca.new_tensor(bg)
     return fgc * fga + bg * (1 - fga)
 
 
 def alpha_blend(bgc: torch.Tensor, bga: torch.Tensor, fgc: torch.Tensor, fga: torch.Tensor):
-    return bgc * (1 - fga) + fgc * fga, bga * (1 - fga) + fga
+    return torch.lerp(bgc, fgc, fga), fma(bga, 1 - fga, fga)
 
 
 def additive(bgc: torch.Tensor, bga: torch.Tensor, fgc: torch.Tensor, fga: torch.Tensor):

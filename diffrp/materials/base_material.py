@@ -23,7 +23,7 @@ class VertexArrayObject:
 
     # index buffers
     tris: torch.IntTensor
-    stencils: torch.IntTensor
+    stencils: torch.ShortTensor
     # REVIEW: this seems coupled with implementation details of render pipelines
     # can we make this only for the material?
     

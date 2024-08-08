@@ -19,6 +19,7 @@ import numpy
 import torch
 import operator
 import itertools
+from typing import Union
 import torch_redstone as rst
 import torch.nn.functional as F
 from .cache import singleton_cached
@@ -30,9 +31,11 @@ def gpu_f32(inputs):
     ``torch.Tensor`` with dtype float32 on the current CUDA device.
     ``CUDA_VISIBLE_DEVICES`` and ``torch.cuda.set_device`` can be used to specify the current device.
     """
+    if isinstance(inputs, (float, int)):
+        return torch.full([], inputs, dtype=torch.float32, device='cuda')
     if isinstance(inputs, torch.Tensor):
-        return inputs.to(dtype=torch.float32, device='cuda').contiguous()
-    return torch.tensor(inputs, dtype=torch.float32, device='cuda').contiguous()
+        return inputs.to(dtype=torch.float32, device='cuda')
+    return torch.tensor(inputs, dtype=torch.float32, device='cuda')
 
 
 def gpu_i32(inputs):
@@ -42,8 +45,8 @@ def gpu_i32(inputs):
     ``CUDA_VISIBLE_DEVICES`` and ``torch.cuda.set_device`` can be used to specify the current device.
     """
     if isinstance(inputs, torch.Tensor):
-        return inputs.to(dtype=torch.int32, device='cuda').contiguous()
-    return torch.tensor(inputs, dtype=torch.int32, device='cuda').contiguous()
+        return inputs.to(dtype=torch.int32, device='cuda')
+    return torch.tensor(inputs, dtype=torch.int32, device='cuda')
 
 
 def gpu_color(inputs):
@@ -62,6 +65,20 @@ def gpu_color(inputs):
     if x.max() > 1.5:
         x /= 255.0
     return x
+
+
+def fsa(a: float, x: torch.Tensor, b: Union[torch.Tensor, float]):
+    """
+    a * x + b (scale-add), but fused/faster
+    """
+    return torch.add(b, x, alpha=a)
+
+
+def fma(x: torch.Tensor, y: torch.Tensor, b: torch.Tensor, a: float = 1.0):
+    """
+    a * x * y + b (multiply-add), but fused/faster.
+    """
+    return torch.addcmul(b, x, y, value=a)
 
 
 def multi_surf(*surfs):
@@ -293,7 +310,7 @@ def reflect(i: torch.Tensor, n: torch.Tensor):
     Returns:
         torch.Tensor: Tensor of the same shape as inputs.
     """
-    return i - 2.0 * dot(n, i) * n
+    return fma(dot(n, i), n, i, -2.0)
 
 
 def saturate(x: torch.Tensor):
@@ -353,7 +370,7 @@ def floatx(*tensors):
 
     Example: floatx(rgba.rgb, 1) can give a new RGBA tensor with alpha set to opaque.
     """
-    tensors = [x if torch.is_tensor(x) else gpu_f32(x) for x in tensors]
+    tensors = [x if isinstance(x, torch.Tensor) else gpu_f32(x) for x in tensors]
     ref_shape = tensors[0].shape[:-1]
     if all(x.shape[:-1] == ref_shape for x in tensors[1:]):
         return torch.cat(tensors, dim=-1)

@@ -1,11 +1,11 @@
 import math
 import torch
-from .shader_ops import float4
+from .shader_ops import float4, fsa
 
 
 def near_plane_ndc_grid(H, W, dtype, device):
-    y = (torch.arange(H, dtype=dtype, device=device))[..., None, None] * (2 / H) + (1 / H - 1)
-    x = (torch.arange(W, dtype=dtype, device=device))[..., None] * (2 / W) + (1 / W - 1)
+    y = fsa(2 / H, (torch.arange(H, dtype=dtype, device=device))[..., None, None], 1 / H - 1)
+    x = fsa(2 / W, (torch.arange(W, dtype=dtype, device=device))[..., None], 1 / W - 1)
     return float4(x, y, -1, 1)
 
 
@@ -55,5 +55,5 @@ def unit_direction_to_angles(L: torch.Tensor):
 
 def unit_direction_to_latlong_uv(L: torch.Tensor):
     u = (torch.atan2(L.x, L.z) * (0.5 / math.pi)) % 1
-    v = torch.asin(torch.clamp(L.y, -1, 1)) / math.pi + 0.5
+    v = fsa(1 / math.pi, torch.asin(torch.clamp(L.y, -1, 1)), 0.5)
     return u, v

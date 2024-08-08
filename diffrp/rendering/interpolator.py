@@ -10,6 +10,7 @@ import abc
 import torch
 from typing import Optional
 import nvdiffrast.torch as dr
+from ..utils import fma
 
 
 @torch.jit.script
@@ -23,7 +24,9 @@ def _interpolate_impl(
     v1, v2, v3 = torch.unbind(vertex_buffer[tris[vi_idx - 1]], dim=-2)
     # v1: *, d
     u, v = vi_data[..., 0:1], vi_data[..., 1:2]
-    result = v1 * u + v2 * v + v3 * (1 - u - v)
+    # result = v1 * u + v2 * v + v3 * (1 - u - v)
+    # (v1 - v3) * u + (v2 - v3) * v + v3
+    result = fma(v1 - v3, u, fma(v2 - v3, v, v3))
     if empty_region is not None:
         result = torch.where(vi_idx[..., None] > 0, result, empty_region)
     return result

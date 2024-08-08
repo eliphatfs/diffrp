@@ -228,7 +228,7 @@ class SurfaceDeferredRenderSession:
             world_pos.append(transform_point4x3(x.verts, x.M))
             assert x.tris.size(-1) == 3, "Expected 3 vertices per triangle, got %d" % x.tris.size(-1)
             tris.append(x.tris + offset)
-            sts.append(x.tris.new_full([len(x.tris)], s + 1, dtype=torch.int16))
+            sts.append(torch.full([len(x.tris)], s + 1, dtype=torch.int16, device=x.tris.device))
             offset += len(x.verts)
         total_custom_attrs = set().union(*(obj.custom_attrs.keys() for obj in objs))
         for k in total_custom_attrs:
@@ -251,7 +251,7 @@ class SurfaceDeferredRenderSession:
             self._checked_cat([obj.normals for obj in objs], verts_ref, 3),
             torch.cat(world_pos),
             torch.cat(tris).int().contiguous(),
-            torch.cat(sts).int().contiguous(),
+            torch.cat(sts).short().contiguous(),
             self._checked_cat([obj.color for obj in objs], verts_ref, None),
             self._checked_cat([obj.uv for obj in objs], verts_ref, 2),
             self._checked_cat([obj.tangents for obj in objs], verts_ref, 4),
@@ -267,9 +267,7 @@ class SurfaceDeferredRenderSession:
             torch.Tensor: Tensor of shape (V, 4).
         """
         vao = self.vertex_array_object()
-        v = self.camera_V()
-        p = self.camera_P()
-        return transform_point(vao.world_pos, p @ v).contiguous()
+        return transform_point(vao.world_pos, self.camera_VP()).contiguous()
     
     @cached
     def rasterize(self):
@@ -331,6 +329,10 @@ class SurfaceDeferredRenderSession:
         return m_layers
     
     @cached
+    def camera_VP(self):
+        return torch.mm(self.camera_P(), self.camera_V())
+    
+    @cached
     def camera_P(self):
         return self.camera.P()
     
@@ -363,6 +365,12 @@ class SurfaceDeferredRenderSession:
         vao = self.vertex_array_object()
         h, w = self.camera.resolution()
         gbuffers = []
+        if self.options.intepolator_impl == 'stencil_masked':
+            if default == [default[0]] * len(default):
+                defaults = torch.full([1, h, w, len(default)], default[0], dtype=torch.float32, device='cuda')
+            else:
+                defaults = [torch.full([1, h, w, 1], x, dtype=torch.float32, device='cuda') for x in default]
+                defaults = torch.cat(defaults, dim=-1)
         for rast, mats in zip(self.rasterize(), self.layer_material()):
             if self.options.intepolator_impl == 'full_screen':
                 buffer = [gpu_f32(default).expand(1, h, w, len(default))]
@@ -375,9 +383,9 @@ class SurfaceDeferredRenderSession:
                         stencil_lookup.append(len(buffer))
                         buffer.append(op)
                 stencil_lookup = vao.stencils.new_tensor(stencil_lookup)
-                gbuffers.append(torch.gather(torch.cat(buffer), 0, stencil_lookup[vao.stencils][rast.a.int()].repeat_interleave(len(default), dim=-1).long()))
+                gbuffers.append(torch.gather(torch.cat(buffer), 0, stencil_lookup[vao.stencils.int()][rast.a.int()].repeat_interleave(len(default), dim=-1).long()))
             elif self.options.intepolator_impl == 'stencil_masked':
-                buffer = gpu_f32(default).expand(1, h, w, len(default))
+                buffer = defaults
                 indices = []
                 values = []
                 nind = 0
@@ -390,7 +398,9 @@ class SurfaceDeferredRenderSession:
                         nind = len(interpolator.indices)
                         indices.append(interpolator.indices)
                         values.append(op)
-                if nind != 0:
+                if len(indices) == 1:
+                    buffer = buffer.index_put(indices[0], values[0])
+                elif nind != 0:
                     indices = tuple(torch.cat([x[i] for x in indices]) for i in range(nind))
                     values = torch.cat(values)
                     buffer = buffer.index_put(indices, values)
@@ -473,7 +483,7 @@ class SurfaceDeferredRenderSession:
             vnt = so.normal
             vt, vs = si.world_tangent.xyz, si.world_tangent.w
             vb = vs * cross(vn, vt)
-            return normalized(vnt.x * vt + vnt.y * vb + vnt.z * vn)
+            return normalized(fma(vnt.x, vt, fma(vnt.y, vb, vnt.z * vn)))
         if so.normal_space == 'object':
             return normalized(transform_vector3x3(so.normal, si.uniforms.M))
         if so.normal_space == 'world':
@@ -507,6 +517,14 @@ class SurfaceDeferredRenderSession:
     @cached
     def local_position_layered(self) -> List[torch.Tensor]:
         return self.gbuffer_collect(lambda x, y: x.local_pos, [0., 0., 0.])
+    
+    @staticmethod
+    @torch.jit.script
+    def _view_dir_impl(grid, v, vp):
+        camera_matrix = torch.linalg.inv(v)
+        grid = torch.matmul(grid, torch.linalg.inv(vp).T)
+        grid = grid[..., :3] / grid[..., 3:]
+        return normalized(grid - camera_matrix[:3, 3])
 
     @cached
     def view_dir(self) -> torch.Tensor:
@@ -517,10 +535,7 @@ class SurfaceDeferredRenderSession:
                 Tensor of shape (H, W, 3).
         """
         grid = near_plane_ndc_grid(*self.camera.resolution(), torch.float32, 'cuda')
-        camera_matrix = torch.linalg.inv(self.camera_V())
-        grid = torch.matmul(grid, (camera_matrix @ torch.linalg.inv(self.camera_P())).T)
-        grid = grid.xyz / grid.w
-        return normalized(grid - camera_matrix[:3, 3])
+        return self._view_dir_impl(grid, self.camera_V(), self.camera_VP())
 
     @cached
     def albedo(self):
@@ -740,6 +755,22 @@ class SurfaceDeferredRenderSession:
             self._cache = {}
         self._cache[SurfaceDeferredRenderSession.prepare_ibl.__qualname__] = cache
 
+    @staticmethod
+    @torch.jit.script
+    def _ibl_combine_impl(
+        metal: torch.Tensor, rough: torch.Tensor, albedo: torch.Tensor,
+        irradiance_fetch: torch.Tensor, specular_fetch: torch.Tensor,
+        brdf: torch.Tensor, n_dot_v: torch.Tensor, ao: torch.Tensor
+    ):
+        dielectric = 1 - metal
+        f0 = fma(albedo, metal, 0.04 * dielectric)
+        f = fresnel_schlick_roughness(n_dot_v, f0, rough)
+        bx, by = torch.split(brdf, 1, dim=-1)
+
+        diffuse = irradiance_fetch * albedo * dielectric * (1 - f)
+        specular_diffuse = fma(specular_fetch, fma(f, bx, by), diffuse)
+        return specular_diffuse * ao
+
     def ibl(
         self,
         world_normal: torch.Tensor,
@@ -755,24 +786,21 @@ class SurfaceDeferredRenderSession:
         env_brdf = pre_integral_env_brdf()
         pre_levels, irradiance = self.prepare_ibl()
 
-        n_dot_v = torch.relu(dot(world_normal, -view_dir))
+        n_dot_v = torch.relu(-dot(world_normal, view_dir))
         r = reflect(view_dir, world_normal)
         n_uv = float2(*unit_direction_to_latlong_uv(world_normal))
 
-        metal = mso.x
-        rough = 1 - mso.y
+        metal, smooth, ao = mso.x, mso.y, mso.z
+        rough = 1 - smooth
         r_uvm = float3(*unit_direction_to_latlong_uv(r), rough)
         pre_fetch = sample3d(pre_levels, r_uvm, 'latlong')
 
-        brdf = sample2d(env_brdf, float2(n_dot_v, mso.y))
+        brdf = sample2d(env_brdf, float2(n_dot_v, smooth))
         irradiance_fetch = sample2d(irradiance, n_uv, 'latlong')
 
-        f0 = torch.lerp(albedo.new_full([3], 0.04), albedo, metal)  # 0.04 * (1.0 - metal) + albedo * metal
-        f = fresnel_schlick_roughness(n_dot_v, f0, rough)
-
-        specular = pre_fetch * (f * brdf.x + brdf.y)
-        diffuse = irradiance_fetch * albedo * (1.0 - metal) * (1 - f)
-        return (specular + diffuse) * mso.z
+        return SurfaceDeferredRenderSession._ibl_combine_impl(
+            metal, rough, albedo, irradiance_fetch, pre_fetch, brdf, n_dot_v, ao
+        )
 
     @cached
     def pbr_layered(self) -> List[torch.Tensor]:
