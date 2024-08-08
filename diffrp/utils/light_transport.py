@@ -136,6 +136,7 @@ def prefilter_env_map(
         values = values / (weights + 1e-4) 
         values = to_hwc(F.interpolate(to_bchw(values), [base_resolution, base_resolution * 2], mode='bilinear', align_corners=True))
         levels.append(values)
+    levels.reverse()
     return torch.stack(levels)
 
 
@@ -172,15 +173,15 @@ def geometry_schlick_ggx(n_dot_v: torch.Tensor, roughness: torch.Tensor):
 
 
 def geometry_smith(n: torch.Tensor, v: torch.Tensor, L: torch.Tensor, roughness: torch.Tensor):
-    n_dot_v = torch.relu(dot(n, v))
-    n_dot_L = torch.relu(dot(n, L))
+    n_dot_v = torch.relu_(dot(n, v))
+    n_dot_L = torch.relu_(dot(n, L))
     ggx2 = geometry_schlick_ggx(n_dot_v, roughness)
     ggx1 = geometry_schlick_ggx(n_dot_L, roughness)
     return ggx1 * ggx2
 
 
-def fresnel_schlick_roughness(cos_theta: torch.Tensor, f0: torch.Tensor, roughness: torch.Tensor):
-    return f0 + (torch.maximum(1.0 - roughness, f0) - f0) * (saturate(1.0 - cos_theta) ** 5.0)
+def fresnel_schlick_smoothness(cos_theta: torch.Tensor, f0: torch.Tensor, smoothness: torch.Tensor):
+    return fma(torch.relu_(smoothness - f0), (1.0 - cos_theta) ** 5.0, f0)
 
 
 @singleton_cached

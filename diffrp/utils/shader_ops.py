@@ -110,14 +110,14 @@ def homogeneous(coords: torch.Tensor):
     """
     Concatenate a channel of ones to the given ``coords`` to obtain its homogeneous-coordinate position.
     """
-    return torch.cat([coords, ones_like_vec(coords, 1)], dim=-1)
+    return F.pad(coords, (0, 1), value=1)
 
 
 def homogeneous_vec(coords: torch.Tensor):
     """
     Concatenate a channel of zeros to the given ``coords`` to obtain its homogeneous-coordinate direction.
     """
-    return torch.cat([coords, zeros_like_vec(coords, 1)], dim=-1)
+    return F.pad(coords, (0, 1), value=0)
 
 
 def transform_point(xyz, matrix):

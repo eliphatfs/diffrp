@@ -14,7 +14,7 @@ from ..utils.composite import alpha_blend, alpha_additive
 from ..utils.coordinates import unit_direction_to_latlong_uv, near_plane_ndc_grid
 from .interpolator import FullScreenInterpolator, MaskedSparseInterpolator, polyfill_interpolate
 from ..materials.base_material import VertexArrayObject, SurfaceInput, SurfaceUniform, SurfaceOutputStandard
-from ..utils.light_transport import prefilter_env_map, pre_integral_env_brdf, irradiance_integral_env_map, fresnel_schlick_roughness
+from ..utils.light_transport import prefilter_env_map, pre_integral_env_brdf, irradiance_integral_env_map, fresnel_schlick_smoothness
 
 
 ctx_cache = {}
@@ -369,8 +369,7 @@ class SurfaceDeferredRenderSession:
             if default == [default[0]] * len(default):
                 defaults = torch.full([1, h, w, len(default)], default[0], dtype=torch.float32, device='cuda')
             else:
-                defaults = [torch.full([1, h, w, 1], x, dtype=torch.float32, device='cuda') for x in default]
-                defaults = torch.cat(defaults, dim=-1)
+                defaults = gpu_f32(default).expand(1, h, w, len(default))
         for rast, mats in zip(self.rasterize(), self.layer_material()):
             if self.options.intepolator_impl == 'full_screen':
                 buffer = [gpu_f32(default).expand(1, h, w, len(default))]
@@ -760,14 +759,14 @@ class SurfaceDeferredRenderSession:
     @staticmethod
     @torch.jit.script
     def _ibl_combine_impl(
-        metal: torch.Tensor, rough: torch.Tensor, albedo: torch.Tensor,
+        metal: torch.Tensor, smooth: torch.Tensor, albedo: torch.Tensor,
         irradiance_fetch: torch.Tensor, specular_fetch: torch.Tensor,
         brdf: torch.Tensor, n_dot_v: torch.Tensor, ao: torch.Tensor
     ):
         dielectric = 1 - metal
         f0 = fma(albedo, metal, 0.04 * dielectric)
-        f = fresnel_schlick_roughness(n_dot_v, f0, rough)
-        bx, by = torch.split(brdf, 1, dim=-1)
+        f = fresnel_schlick_smoothness(n_dot_v, f0, smooth)
+        bx, by = brdf[..., 0:1], brdf[..., 1:2]
 
         diffuse = irradiance_fetch * albedo * dielectric * (1 - f)
         specular_diffuse = fma(specular_fetch, fma(f, bx, by), diffuse)
@@ -788,20 +787,19 @@ class SurfaceDeferredRenderSession:
         env_brdf = pre_integral_env_brdf()
         pre_levels, irradiance = self.prepare_ibl()
 
-        n_dot_v = torch.relu(-dot(world_normal, view_dir))
+        n_dot_v = torch.relu_(-dot(world_normal, view_dir))
         r = reflect(view_dir, world_normal)
         n_uv = float2(*unit_direction_to_latlong_uv(world_normal))
 
         metal, smooth, ao = mso.x, mso.y, mso.z
-        rough = 1 - smooth
-        r_uvm = float3(*unit_direction_to_latlong_uv(r), rough)
+        r_uvm = float3(*unit_direction_to_latlong_uv(r), smooth)
         pre_fetch = sample3d(pre_levels, r_uvm, 'latlong')
 
         brdf = sample2d(env_brdf, float2(n_dot_v, smooth))
         irradiance_fetch = sample2d(irradiance, n_uv, 'latlong')
 
         return SurfaceDeferredRenderSession._ibl_combine_impl(
-            metal, rough, albedo, irradiance_fetch, pre_fetch, brdf, n_dot_v, ao
+            metal, smooth, albedo, irradiance_fetch, pre_fetch, brdf, n_dot_v, ao
         )
 
     @cached
