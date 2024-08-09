@@ -169,6 +169,10 @@ class SurfaceDeferredRenderSession:
     It is not thread-safe to run more than one sessions on the same GPU by default.
     If you need to do this, see the ``ctx`` parameter.
 
+    DiffRP operations do not support multiple GPUs on a single process.
+    You will need to access the GPUs with a distributed paradigm,
+    where each process only uses one GPU.
+
     Args:
         scene (Scene): The scene to be rendered.
         camera (Camera): The camera to be rendered.
