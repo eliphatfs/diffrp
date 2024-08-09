@@ -21,9 +21,9 @@ pip install git+https://github.com/eliphatfs/diffrp
 DiffRP depends on PyTorch (`torch`). The default version `pip` resolves to may not come with the `cuda` version you want. It is recommended to install [PyTorch](https://pytorch.org/get-started/locally/#start-locally) before you install DiffRP so you can choose the version you like.
 ```
 
-If you use rasterization in DiffRP, you need to have the CUDA development kit set up as we use the `nvdiffrast` backend (see also https://nvlabs.github.io/nvdiffrast/#installation).
+If you use rasterization in DiffRP, you need to have the CUDA development kit set up as we use the `nvdiffrast` backend (see also [https://nvlabs.github.io/nvdiffrast/#installation](https://nvlabs.github.io/nvdiffrast/#installation)).
 
-If you plan on using plugins in DiffRP (currently when you compute tangents), `gcc` is required in path. This is already fulfilled in most Linux and Mac distributions. For Windows I recommend the Strawberry Perl (https://strawberryperl.com/) distribution of `gcc`.
+If you plan on using plugins in DiffRP (currently when you compute tangents), `gcc` is required in path. This is already fulfilled in most Linux and Mac distributions. For Windows I recommend the Strawberry Perl [(https://strawberryperl.com/)](https://strawberryperl.com/) distribution of `gcc`.
 
 ## Get Started
 
