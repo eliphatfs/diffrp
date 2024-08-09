@@ -21,6 +21,10 @@ pip install git+https://github.com/eliphatfs/diffrp
 DiffRP depends on PyTorch (`torch`). The default version `pip` resolves to may not come with the `cuda` version you want. It is recommended to install [PyTorch](https://pytorch.org/get-started/locally/#start-locally) before you install DiffRP so you can choose the version you like.
 ```
 
+If you use rasterization in DiffRP, you need to have the CUDA development kit set up as we use the `nvdiffrast` backend (see also https://nvlabs.github.io/nvdiffrast/#installation).
+
+If you plan on using plugins in DiffRP (currently when you compute tangents), `gcc` is required in path. This is already fulfilled in most Linux and Mac distributions. For Windows I recommend the Strawberry Perl (https://strawberryperl.com/) distribution of `gcc`.
+
 ## Get Started
 
 Rendering attributes of a mesh programmingly is incredibly simple with DiffRP compared to conventional render engines like Blender and Unity.
@@ -77,6 +81,9 @@ It is recommended to go through the glTF rendering tutorial even if you do not n
 ```{toctree}
 :maxdepth: 1
 gltf
+concepts
+pipeline_surface_deferred
+writing_a_material
 ```
 
 ## API Reference
@@ -88,6 +95,7 @@ generated/diffrp
 
 ## Update Notes
 
++ **0.1.1**: Performance and documentation improvements.
 + **0.1.0**: A major rewrite of the whole package. Will try to provide backward compatibility of all documented public APIs from this version on.
 + **0.0.2**: Minor improvements.
 + **0.0.1**: First verion, fully experimental.
