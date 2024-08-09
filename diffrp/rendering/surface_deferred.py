@@ -725,6 +725,13 @@ class SurfaceDeferredRenderSession:
 
     @cached
     def prepare_ibl(self):
+        """
+        Prepares the cache (prefiltered mips) for IBL.
+
+        The return value can be provided via `set_prepare_ibl` for other Sessions
+        if the `ImageEnvironmentLight`s haven't been changed and are not requiring gradient
+        to improve render performance.
+        """
         opt = self.options
         prev_pre_levels = None
         prev_irradiance = None
