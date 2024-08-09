@@ -575,7 +575,7 @@ def empty_normal_tex():
     return gpu_f32(numpy.full([16, 16, 3], [0.5, 0.5, 1.0], dtype=numpy.float32))
 
 
-class SmallMatrixInverse(torch.autograd.Function):
+class _SmallMatrixInverse(torch.autograd.Function):
     @staticmethod
     def forward(ctx: torch.autograd.function.FunctionCtx, matrix: torch.Tensor):
         output = matrix.new_tensor(numpy.linalg.inv(matrix.detach().cpu().numpy()))
@@ -593,7 +593,7 @@ def small_matrix_inverse(x: torch.Tensor) -> torch.Tensor:
     """
     Faster inverse for matrices smaller than 2x8x8.
     """
-    return SmallMatrixInverse.apply(x)
+    return _SmallMatrixInverse.apply(x)
 
 
 def _make_attr(attr: str, idx: str):

@@ -104,7 +104,7 @@ class SurfaceDeferredRenderSessionOptions:
             self.max_layers = 32767
 
 
-class EdgeGradient(torch.autograd.Function):
+class _EdgeGradient(torch.autograd.Function):
     @staticmethod
     def forward(ctx: torch.autograd.function.FunctionCtx, frag_xy, flat_tris_xy, rast, rgb):
         ctx.save_for_backward(frag_xy, flat_tris_xy, rast, rgb)
@@ -728,8 +728,8 @@ class SurfaceDeferredRenderSession:
         """
         Prepares the cache (prefiltered mips) for IBL.
 
-        The return value can be provided via `set_prepare_ibl` for other Sessions
-        if the `ImageEnvironmentLight`s haven't been changed and are not requiring gradient
+        The return value can be provided via ``set_prepare_ibl`` for other Sessions
+        if any ``ImageEnvironmentLight`` in the scene haven't been changed and are not requiring gradient
         to improve render performance.
         """
         opt = self.options
@@ -894,4 +894,4 @@ class SurfaceDeferredRenderSession:
 
         flat_tris_xy = (clip_space.xy / clip_space.w)[tris]  # F, 3, 2
 
-        return torch.flipud(EdgeGradient.apply(frag_xy, flat_tris_xy, rast, torch.flipud(rgb)))
+        return torch.flipud(_EdgeGradient.apply(frag_xy, flat_tris_xy, rast, torch.flipud(rgb)))
