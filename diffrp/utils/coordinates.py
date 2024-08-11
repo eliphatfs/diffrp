@@ -49,17 +49,23 @@ def unit_direction_to_angles(L: torch.Tensor):
     See also:
         :py:obj:`diffrp.rendering.camera.PerspectiveCamera.from_orbit`.
     """
-    theta = torch.atan2(L.x, L.z)
-    phi = torch.asin(torch.clamp(L.y, -1, 1))
+    z = L.z
+    if torch.is_grad_enabled():
+        z = torch.where(z == 0, 1e-8, z)
+    theta = torch.atan2(L.x, z)
+    phi = torch.asin(torch.clamp(L.y, -0.999999, 0.999999))
     return theta, phi
 
 
 @torch.jit.script
 def _unit_direction_to_latlong_uv_impl(x: torch.Tensor, y: torch.Tensor, z: torch.Tensor):
     u = (torch.atan2(x, z) * (0.5 / math.pi)) % 1
-    v = (1 / math.pi) * torch.asin(torch.clamp(y, -1, 1)) + 0.5
+    v = (1 / math.pi) * torch.asin(torch.clamp(y, -0.999999, 0.999999)) + 0.5
     return u, v
 
 
 def unit_direction_to_latlong_uv(L: torch.Tensor):
-    return _unit_direction_to_latlong_uv_impl(L.x, L.y, L.z)
+    z = L.z
+    if torch.is_grad_enabled():
+        z = torch.where(z == 0, 1e-8, z)
+    return _unit_direction_to_latlong_uv_impl(L.x, L.y, z)
