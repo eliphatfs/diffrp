@@ -101,6 +101,7 @@ generated/diffrp
 
 ## Update Notes
 
++ **0.1.3**: Fix instanced GLTF material loading (GPU memory explosion issue).
 + **0.1.2**: Fix numerical stability of coordinate transform backward.
 + **0.1.1**: Performance and documentation improvements.
 + **0.1.0**: A major rewrite of the whole package. Will try to provide backward compatibility of all documented public APIs from this version on.

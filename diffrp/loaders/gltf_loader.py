@@ -22,7 +22,7 @@ def force_rgba(color: torch.Tensor):
     return color
 
 
-def to_gltf_material(verts: torch.Tensor, visual):
+def to_gltf_material(verts: torch.Tensor, visual, material_cache: dict = {}):
     # GLTF 2.0 specifications 3.9.6 and 5.19
     default_mat = GLTFMaterial(
         gpu_f32([1, 1, 1, 1]),
@@ -46,6 +46,8 @@ def to_gltf_material(verts: torch.Tensor, visual):
             uv = gpu_f32(visual.uv)
         mat = visual.material
         assert isinstance(mat, PBRMaterial), type(mat)
+        if mat in material_cache:
+            return uv, color, material_cache[mat]
         if mat.baseColorFactor is not None:
             default_mat.base_color_factor = force_rgba(gpu_f32(mat.baseColorFactor))
         if mat.baseColorTexture is not None:
@@ -73,6 +75,7 @@ def to_gltf_material(verts: torch.Tensor, visual):
             default_mat.alpha_cutoff = float(mat.alphaCutoff)
         if mat.alphaMode is not None:
             default_mat.alpha_mode = str(mat.alphaMode)
+        material_cache[mat] = default_mat
     else:
         assert False, ["Unknown visual", type(visual)]
     return uv, color, default_mat
@@ -116,9 +119,10 @@ def load_gltf_scene(path, compute_tangents=False) -> Scene:
             meshes.append(current)
             transforms.append(gpu_f32(transform))
     logging.info("Loaded scene %s with %d submeshes and %d discarded curve/pcd geometry", path, len(meshes), discarded)
+    material_cache = {}
     for transform, mesh in zip(transforms, meshes):
         verts = gpu_f32(mesh.vertices)
-        uv, color, mat = to_gltf_material(verts, mesh.visual)
+        uv, color, mat = to_gltf_material(verts, mesh.visual, material_cache)
         # TODO: load vertex tangents if existing
         if 'vertex_normals' in mesh._cache and not compute_tangents:
             drp_scene.add_mesh_object(MeshObject(
