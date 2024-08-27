@@ -2,7 +2,8 @@ import numpy
 import torch
 import logging
 import trimesh
-from typing import List
+from PIL import Image
+from typing import List, Union, BinaryIO
 from trimesh.visual.material import PBRMaterial
 from trimesh.visual import ColorVisuals, TextureVisuals
 
@@ -12,6 +13,13 @@ from ..plugins import mikktspace
 from ..scene import Scene, MeshObject
 from ..rendering.camera import PerspectiveCamera
 from ..materials.gltf_material import GLTFMaterial, GLTFSampler
+from ._trimesh_gltf import load_glb as _load_glb, load_gltf as _load_gltf
+
+
+def ensure_mode(img: Image.Image, mode: str):
+    if img.mode == mode:
+        return img
+    return img.convert(mode)
 
 
 def force_rgba(color: torch.Tensor):
@@ -46,47 +54,54 @@ def to_gltf_material(verts: torch.Tensor, visual, material_cache: dict = {}):
             uv = gpu_f32(visual.uv)
         mat = visual.material
         assert isinstance(mat, PBRMaterial), type(mat)
-        if mat in material_cache:
-            return uv, color, material_cache[mat]
+        if id(mat) in material_cache:
+            return uv, color, material_cache[id(mat)]
         if mat.baseColorFactor is not None:
             default_mat.base_color_factor = force_rgba(gpu_f32(mat.baseColorFactor))
         if mat.baseColorTexture is not None:
-            srgb = gpu_f32(numpy.array(mat.baseColorTexture.convert("RGBA"))) / 255.0
-            default_mat.base_color_texture.image = float4(colors.srgb_to_linear(srgb.rgb), srgb.a)
+            base_map = gpu_f32(numpy.asanyarray(ensure_mode(mat.baseColorTexture, "RGBA")))
+            base_map /= 255.0
+            base_map = float4(colors.srgb_to_linear(base_map.rgb), base_map.a)
+            default_mat.base_color_texture.image = base_map
         if mat.metallicFactor is not None:
             default_mat.metallic_factor = float(mat.metallicFactor)
         if mat.roughnessFactor is not None:
             default_mat.roughness_factor = float(mat.roughnessFactor)
         if mat.metallicRoughnessTexture is not None:
-            mr = gpu_f32(numpy.array(mat.metallicRoughnessTexture.convert("RGB"))) / 255.0
+            mr = gpu_f32(numpy.asanyarray(ensure_mode(mat.metallicRoughnessTexture, "RGB")))
+            mr /= 255.0
             default_mat.metallic_roughness_texture.image = mr
         if mat.normalTexture is not None:
-            nm = gpu_f32(numpy.array(mat.normalTexture.convert("RGB"))) / 255.0
+            nm = gpu_f32(numpy.asanyarray(ensure_mode(mat.normalTexture, "RGB")))
+            nm /= 255.0
             default_mat.normal_texture = GLTFSampler(nm)
         if mat.occlusionTexture is not None:
-            occ = gpu_f32(numpy.array(mat.occlusionTexture.convert("RGB"))) / 255.0
+            occ = gpu_f32(numpy.asanyarray(ensure_mode(mat.occlusionTexture, "RGB")))
+            occ /= 255.0
             default_mat.occlusion_texture = GLTFSampler(occ)
         if mat.emissiveFactor is not None and (mat.emissiveFactor > 0).any():
             default_mat.emissive_factor = gpu_f32(mat.emissiveFactor)
         if mat.emissiveTexture is not None:
-            emit = gpu_f32(numpy.array(mat.emissiveTexture.convert("RGB"))) / 255.0
-            default_mat.emissive_texture.image = colors.srgb_to_linear(emit)
+            emit = gpu_f32(numpy.asanyarray(ensure_mode(mat.emissiveTexture, "RGB")))
+            emit /= 255.0
+            emit = colors.srgb_to_linear(emit)
+            default_mat.emissive_texture.image = emit
         if mat.alphaCutoff is not None:
             default_mat.alpha_cutoff = float(mat.alphaCutoff)
         if mat.alphaMode is not None:
             default_mat.alpha_mode = str(mat.alphaMode)
-        material_cache[mat] = default_mat
+        material_cache[id(mat)] = default_mat
     else:
         assert False, ["Unknown visual", type(visual)]
     return uv, color, default_mat
 
 
-def load_gltf_scene(path, compute_tangents=False) -> Scene:
+def load_gltf_scene(path: Union[str, BinaryIO], compute_tangents=False) -> Scene:
     """
     Load a glb file as a DiffRP Scene.
     
     Args:
-        path (str): path to the ``.glb`` file.
+        path (str | BinaryIO): path to a ``.glb``/``.gltf`` file, or opened ``.glb`` file in binary mode.
         compute_tangents (bool):
             If set, tangents will be computed according to the *MikkTSpace* algorithm.
             Execution of the algorithm requires ``gcc`` in the path.
@@ -96,8 +111,14 @@ def load_gltf_scene(path, compute_tangents=False) -> Scene:
         The loaded scene.
     """
     drp_scene = Scene()
-
-    scene: trimesh.Scene = trimesh.load(path, force='scene', process=False)
+    loader = _load_glb
+    if isinstance(path, str):
+        if path.endswith(".gltf"):
+            loader = _load_gltf
+        path = open(path, "rb")
+    kw = loader(path)
+    path.close()
+    scene: trimesh.Scene = trimesh.load(kw, force='scene', process=False)
     if scene.has_camera:
         camera = PerspectiveCamera(
             float(scene.camera.fov[1]),
