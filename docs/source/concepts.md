@@ -23,7 +23,7 @@ Physically correct light interactions should be computed in the linear space sin
 
 Thus, color data is assumed linear in DiffRP, including those loaded by {py:mod}`diffrp.loaders.gltf_loader`.
 
-However, this is not how our eyes work. The perception of human vision is in the sRGB space, which is a different space than linear. Most LDR images (e.g. JPEG/PNG) are thus stored in the sRGB space on the computers. The mapping is commonly wrongly referred to as *gamma correction* but it should be a slightly different mapping. You can find it in {py:mod}`diffrp.utils.color`.
+However, this is not how our eyes work. The perception of human vision is in the sRGB space, which is a different space than linear. Most LDR images (e.g. JPEG/PNG) are thus stored in the sRGB space on the computers. The mapping is commonly wrongly referred to as *gamma correction* but it should be a slightly different mapping. You can find it in {py:mod}`diffrp.utils.colors`.
 
 You may need to convert input images (like environment images or texture maps in JPEG/PNG) from sRGB to Linear before doing PBR, and convert the output images from Linear to sRGB before you view them. EXR/HDR images are usually already in linear space.
 
