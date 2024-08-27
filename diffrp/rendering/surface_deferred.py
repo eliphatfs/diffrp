@@ -214,12 +214,18 @@ class SurfaceDeferredRenderSession:
             self.ctx = ctx_cache[device]
         self.options = options
 
+    def _cat_fast_path(self, attrs: List[torch.Tensor]):
+        if len(attrs) == 1:
+            return attrs[0]
+        else:
+            return torch.cat(attrs)
+
     def _checked_cat(self, attrs: List[torch.Tensor], verts_ref: List[torch.Tensor], expected_dim):
         for v, a in zip(verts_ref, attrs):
             assert v.shape[0] == a.shape[0], "attribute length not the same as number of vertices"
             if isinstance(expected_dim, int):
                 assert a.shape[-1] == expected_dim, "expected %d dims but got %d for vertex attribute" % (expected_dim, a.shape[-1])
-        return torch.cat(attrs)
+        return self._cat_fast_path(attrs)
 
     @cached
     def vertex_array_object(self) -> VertexArrayObject:
@@ -253,9 +259,9 @@ class SurfaceDeferredRenderSession:
         return VertexArrayObject(
             self._checked_cat([obj.verts for obj in objs], verts_ref, 3),
             self._checked_cat([obj.normals for obj in objs], verts_ref, 3),
-            torch.cat(world_pos),
-            torch.cat(tris).int(memory_format=torch.contiguous_format),
-            torch.cat(sts).int(memory_format=torch.contiguous_format),
+            self._cat_fast_path(world_pos),
+            self._cat_fast_path(tris).int(memory_format=torch.contiguous_format),
+            self._cat_fast_path(sts).int(memory_format=torch.contiguous_format),
             self._checked_cat([obj.color for obj in objs], verts_ref, None),
             self._checked_cat([obj.uv for obj in objs], verts_ref, 2),
             self._checked_cat([obj.tangents for obj in objs], verts_ref, 4),
