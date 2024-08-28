@@ -27,7 +27,8 @@ class Scene:
     def static_batching(self) -> Self:
         """
         Batches meshes with the same material into a single pass for faster rendering.
-        Suitable if you want to render multiple frames of the same scene.
+        Suitable if you have multiple meshes with the same material, and
+        want to render multiple frames of the same scene.
 
         Changes are made in-place.
         You shall not modify the old mesh objects after calling this method.
