@@ -8,7 +8,7 @@ from .base_material import SurfaceInput, SurfaceMaterial, SurfaceOutputStandard,
 
 @dataclass
 class GLTFSampler:
-    image: torch.Tensor  # F3 or F4
+    image: torch.Tensor  # F1, F3 or F4
     wrap_mode: Literal['repeat', 'clamp', 'mirror'] = 'repeat'
     interpolation: Literal['point', 'linear'] = 'linear'
 

@@ -76,7 +76,7 @@ def to_gltf_material(verts: torch.Tensor, visual, material_cache: dict = {}):
             nm /= 255.0
             default_mat.normal_texture = GLTFSampler(nm)
         if mat.occlusionTexture is not None:
-            occ = gpu_f32(numpy.asanyarray(ensure_mode(mat.occlusionTexture, "RGB")))
+            occ = gpu_f32(numpy.asanyarray(ensure_mode(mat.occlusionTexture, "RGB"))[..., :1])
             occ /= 255.0
             default_mat.occlusion_texture = GLTFSampler(occ)
         if mat.emissiveFactor is not None and (mat.emissiveFactor > 0).any():
