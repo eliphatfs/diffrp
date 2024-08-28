@@ -101,6 +101,7 @@ generated/diffrp
 
 ## Update Notes
 
++ **0.1.4**: Faster GLTF loading, static batching support, minor GPU memory optimizations.
 + **0.1.3**: Fix instanced GLTF material loading (GPU memory explosion issue).
 + **0.1.2**: Fix numerical stability of coordinate transform backward.
 + **0.1.1**: Performance and documentation improvements.
