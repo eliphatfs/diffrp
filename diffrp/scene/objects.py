@@ -65,7 +65,7 @@ class MeshObject:
 
     def preprocess(self):
         if self.M is None:
-            self.M = gpu_f32(torch.eye(4))
+            self.M = torch.eye(4, device=self.verts.device, dtype=self.verts.dtype)
         if self.color is None:
             self.color = ones_like_vec(self.verts, 4)
         if self.uv is None:
