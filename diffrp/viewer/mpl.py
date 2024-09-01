@@ -1,3 +1,6 @@
+"""
+Experimental. Implementation and interface subject to change.
+"""
 import time
 import numpy
 import torch
