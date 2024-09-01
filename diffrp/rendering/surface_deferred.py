@@ -7,13 +7,14 @@ from typing import Union, List, Tuple, Callable, Optional
 from .camera import Camera
 from ..utils.cache import cached
 from ..utils.shader_ops import *
+from .mixin import RenderSessionMixin
 from ..utils.colors import linear_to_srgb
 from ..utils.geometry import point_in_tri2d
 from ..scene import Scene, ImageEnvironmentLight
 from ..utils.composite import alpha_blend, alpha_additive
-from ..utils.coordinates import unit_direction_to_latlong_uv, near_plane_ndc_grid
+from ..utils.coordinates import unit_direction_to_latlong_uv
+from ..materials.base_material import SurfaceInput, SurfaceUniform, SurfaceOutputStandard
 from .interpolator import FullScreenInterpolator, MaskedSparseInterpolator, polyfill_interpolate
-from ..materials.base_material import VertexArrayObject, SurfaceInput, SurfaceUniform, SurfaceOutputStandard
 from ..utils.light_transport import prefilter_env_map, pre_integral_env_brdf, irradiance_integral_env_map, fresnel_schlick_smoothness
 
 
@@ -156,7 +157,7 @@ class _EdgeGradient(torch.autograd.Function):
         return torch.cat([grad_x * (w / 2), grad_y * (h / 2)], dim=-1), None, None, grad_rgb
 
 
-class SurfaceDeferredRenderSession:
+class SurfaceDeferredRenderSession(RenderSessionMixin):
     """
     The heart of the deferred rasterization render pipeline in DiffRP.
     Most intermediate options in this class are cached,
@@ -213,60 +214,6 @@ class SurfaceDeferredRenderSession:
                 ctx_cache[device] = dr.RasterizeCudaContext()
             self.ctx = ctx_cache[device]
         self.options = options
-
-    def _cat_fast_path(self, attrs: List[torch.Tensor]):
-        if len(attrs) == 1:
-            return attrs[0]
-        else:
-            return torch.cat(attrs)
-
-    def _checked_cat(self, attrs: List[torch.Tensor], verts_ref: List[torch.Tensor], expected_dim):
-        for v, a in zip(verts_ref, attrs):
-            assert v.shape[0] == a.shape[0], "attribute length not the same as number of vertices"
-            if isinstance(expected_dim, int):
-                assert a.shape[-1] == expected_dim, "expected %d dims but got %d for vertex attribute" % (expected_dim, a.shape[-1])
-        return self._cat_fast_path(attrs)
-
-    @cached
-    def vertex_array_object(self) -> VertexArrayObject:
-        world_pos = []
-        tris = []
-        sts = [torch.full([1], 0, device='cuda', dtype=torch.int64)]
-        objs = self.scene.objects
-        offset = 0
-        for s, x in enumerate(objs):
-            world_pos.append(transform_point4x3(x.verts, x.M))
-            assert x.tris.shape[-1] == 3, "Expected 3 vertices per triangle, got %d" % x.tris.shape[-1]
-            tris.append(x.tris + offset)
-            sts.append(torch.full([len(x.tris)], s + 1, dtype=torch.int64, device=x.tris.device))
-            offset += len(x.verts)
-        total_custom_attrs = set().union(*(obj.custom_attrs.keys() for obj in objs))
-        for k in total_custom_attrs:
-            for obj in objs:
-                if k in obj.custom_attrs:
-                    sz = obj.custom_attrs[k].shape[-1]
-                    break
-            else:
-                assert False, "Internal assertion failure. You should never reach here."
-            for obj in objs:
-                if k in obj.custom_attrs:
-                    assert len(obj.custom_attrs[k]) == len(obj.verts), "Attribute length not the same as number of vertices: %s" % k
-                    assert obj.custom_attrs[k].shape[-1] == sz, "Different dimensions for same custom attribute: %d != %d" % (obj.custom_attrs[k].shape[-1], sz)
-                else:
-                    obj.custom_attrs[k] = zeros_like_vec(obj.verts, sz)
-
-        verts_ref = [obj.verts for obj in objs]
-        return VertexArrayObject(
-            self._checked_cat([obj.verts for obj in objs], verts_ref, 3),
-            self._checked_cat([obj.normals for obj in objs], verts_ref, 3),
-            self._cat_fast_path(world_pos),
-            self._cat_fast_path(tris).int(memory_format=torch.contiguous_format),
-            self._cat_fast_path(sts).int(memory_format=torch.contiguous_format),
-            self._checked_cat([obj.color for obj in objs], verts_ref, None),
-            self._checked_cat([obj.uv for obj in objs], verts_ref, 2),
-            self._checked_cat([obj.tangents for obj in objs], verts_ref, 4),
-            {k: torch.cat([obj.custom_attrs[k] for obj in objs]) for k in total_custom_attrs}
-        )
     
     @cached
     def clip_space(self):
@@ -337,18 +284,6 @@ class SurfaceDeferredRenderSession:
                 mats.append((si, so))
             m_layers.append(mats)
         return m_layers
-    
-    @cached
-    def camera_VP(self):
-        return torch.mm(self.camera_P(), self.camera_V())
-    
-    @cached
-    def camera_P(self):
-        return self.camera.P()
-    
-    @cached
-    def camera_V(self):
-        return self.camera.V()
 
     def gbuffer_collect(
         self,
@@ -528,25 +463,6 @@ class SurfaceDeferredRenderSession:
     @cached
     def local_position_layered(self) -> List[torch.Tensor]:
         return self.gbuffer_collect(lambda x, y: x.local_pos, [0., 0., 0.])
-    
-    @staticmethod
-    def _view_dir_impl(grid: torch.Tensor, v: torch.Tensor, vp: torch.Tensor):
-        inved_matrices = small_matrix_inverse(torch.stack([v, vp]))
-        camera_pos = inved_matrices[0, :3, 3]
-        grid = torch.matmul(grid, inved_matrices[1].T)
-        grid = grid[..., :3] / grid[..., 3:]
-        return normalized(grid - camera_pos)
-
-    @cached
-    def view_dir(self) -> torch.Tensor:
-        """
-        Returns:
-            torch.Tensor:
-                Full-screen unit direction vectors of outbound rays from the camera.
-                Tensor of shape (H, W, 3).
-        """
-        grid = near_plane_ndc_grid(*self.camera.resolution(), torch.float32, torch.device('cuda'))
-        return self._view_dir_impl(grid, self.camera_V(), self.camera_VP())
 
     @cached
     def albedo(self):
