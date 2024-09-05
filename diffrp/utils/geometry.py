@@ -89,3 +89,27 @@ def point_in_tri2d(pt: torch.Tensor, v1: torch.Tensor, v2: torch.Tensor, v3: tor
     has_neg = (d1 < 0) | (d2 < 0) | (d3 < 0)
     has_pos = (d1 > 0) | (d2 > 0) | (d3 > 0)
     return ~(has_neg & has_pos)
+
+
+@torch.jit.script
+def _barycentric_impl(a: torch.Tensor, b: torch.Tensor, c: torch.Tensor, p: torch.Tensor):
+    v0 = b - a
+    v1 = c - a
+    v2 = p - a
+    d00 = (v0 * v0).sum(-1)
+    d01 = (v0 * v1).sum(-1)
+    d11 = (v1 * v1).sum(-1)
+    d20 = (v2 * v0).sum(-1)
+    d21 = (v2 * v1).sum(-1)
+    denom = d00 * d11 - d01 * d01
+    v = (d11 * d20 - d01 * d21) / denom
+    w = (d00 * d21 - d01 * d20) / denom
+    v = torch.clip(torch.nan_to_num(v), 0, 1)
+    w = torch.clip(torch.nan_to_num(w), 0, 1)
+    u = 1 - v - w
+    return torch.stack([u, v, w], dim=-1)
+
+
+def barycentric(a, b, c, p):
+    # returns u, v, w: p = ua + vb + wc
+    return _barycentric_impl(a, b, c, p)
