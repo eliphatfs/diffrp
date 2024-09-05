@@ -38,9 +38,9 @@ class RenderSessionMixin:
         return camera_pos + rays_d * near, rays_d
 
     @cached
-    def camera_far(self) -> torch.Tensor:
+    def camera_far(self) -> float:
         p = self.camera_P()
-        return p[2, 3] / (p[2, 2] + 1)
+        return (p[2, 3] / (p[2, 2] + 1)).item()
 
     @cached
     def camera_rays(self) -> torch.Tensor:
