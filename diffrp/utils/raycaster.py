@@ -6,7 +6,7 @@ import torch
 from typing import Tuple
 from typing_extensions import Literal
 
-from .shader_ops import cross, dot
+from .shader_ops import cross, dot, full_like_vec
 
 
 class Raycaster(metaclass=abc.ABCMeta):
@@ -46,12 +46,7 @@ class BruteForceRaycaster(Raycaster):
             (torch.abs(det) > epsilon) & (u >= 0) & (v >= 0) & (u + v <= 1) & (t > 0)
         )
         t = torch.where(hit_mask, t, far)  # ..., M, 1
-        sel_tri = torch.argmin(t, dim=-2, keepdim=True)  # ..., M, 1 -> ..., 1, 1
-        sel_u = torch.gather(u, -2, sel_tri).squeeze(-1)
-        sel_v = torch.gather(v, -2, sel_tri).squeeze(-1)
-        sel_t = torch.gather(t, -2, sel_tri).squeeze(-1)  # ..., 1
-        fill_idx = sel_tri.squeeze(-1)
-        return torch.cat([sel_u, sel_v, sel_t], dim=-1), fill_idx
+        return t
 
     @torch.no_grad()
     def build(self, verts: torch.Tensor, tris: torch.IntTensor, config: dict):
@@ -59,10 +54,14 @@ class BruteForceRaycaster(Raycaster):
 
     @torch.no_grad()
     def query(self, rays_o: torch.Tensor, rays_d: torch.Tensor, far: float):
-        return BruteForceRaycaster._ray_tri_intersect(
+        t = BruteForceRaycaster._ray_tri_intersect(
             rays_o.unsqueeze(-2), rays_d.unsqueeze(-2), far, self.triangles.unsqueeze(-4),
             self.config.get("epsilon", 1e-6)
         )
+        sel_tri = torch.argmin(t, dim=-2, keepdim=True)  # ..., M, 1 -> ..., 1, 1
+        sel_t = torch.gather(t, -2, sel_tri).squeeze(-1)  # ..., 1
+        fill_idx = sel_tri.squeeze(-1)
+        return sel_t, fill_idx
 
 
 @torch.jit.script
@@ -152,23 +151,21 @@ class NaivePBBVH(Raycaster):
         self.bmaxs = bmaxs
         self.skip_next = skip_next
         self.scan_next = scan_next
-        self.triangles = triangles
+        self.triangles = triangles[rank]
 
     @staticmethod
     @torch.jit.script
     def _ray_box_intersect_impl(
         bmins: torch.Tensor, bmaxs: torch.Tensor, traverser: torch.Tensor,
-        rays_o: torch.Tensor, rays_d: torch.Tensor, live_idx: torch.Tensor
+        rays_o_live: torch.Tensor, rays_d_live: torch.Tensor, t_live: torch.Tensor
     ):
         bound_min = bmins[traverser]
         bound_max = bmaxs[traverser]
-        rays_o_live = rays_o[live_idx]
-        rays_d_live = rays_d[live_idx]
         t1 = (bound_min - rays_o_live) / rays_d_live  # R, 3
         t2 = (bound_max - rays_o_live) / rays_d_live  # R, 3
         t_min = torch.minimum(t1, t2).max(-1).values
         t_max = torch.maximum(t1, t2).min(-1).values
-        intersect_mask = (t_max > 0) & (t_min <= t_max)
+        intersect_mask = (t_min <= t_live) & (t_max > 0) & (t_min <= t_max)
         return intersect_mask
 
     @torch.no_grad()
@@ -178,36 +175,37 @@ class NaivePBBVH(Raycaster):
         # ^N^, 3
         # R, 3
         live_idx = torch.arange(len(traverser), device=traverser.device)
-        uvt = torch.zeros_like(rays_o)  # R, 3
-        uvt[..., -1] = far
+        t = full_like_vec(rays_o, far, 1)  # R, 3
         i = torch.zeros([len(rays_o), 1], device=traverser.device, dtype=torch.int64)
         tri_start = (1 << self.n) - 1
         while True:
             live_ray = traverser >= 0
-            for _ in range(8):
+            t_live = t[live_idx].squeeze(-1)
+            rays_o_live = rays_o[live_idx]
+            rays_d_live = rays_d[live_idx]
+            for _ in range(self.n // 2 + 1):
                 intersect_mask = NaivePBBVH._ray_box_intersect_impl(
-                    self.bmins, self.bmaxs, traverser, rays_o, rays_d, live_idx
+                    self.bmins, self.bmaxs, traverser, rays_o_live, rays_d_live, t_live
                 )
                 traverser = torch.where(intersect_mask, self.scan_next[traverser], self.skip_next[traverser])
 
-                tri_hits = traverser >= tri_start
-                ray_idx = live_idx[tri_hits]
-                if len(ray_idx) > 0:
-                    tri_idx = self.rank[traverser[tri_hits] - tri_start]
-                    test_uvt, test_i = BruteForceRaycaster._ray_tri_intersect(
-                        rays_o[ray_idx].unsqueeze(-2), rays_d[ray_idx].unsqueeze(-2), far,
-                        self.triangles[tri_idx].unsqueeze(-3), epsilon
+                tri_hits = (traverser >= tri_start).nonzero(as_tuple=True)
+                if len(tri_hits[0]) > 0:
+                    ray_idx = live_idx[tri_hits]
+                    tri_idx = traverser[tri_hits] - tri_start
+                    test_t = BruteForceRaycaster._ray_tri_intersect(
+                        rays_o[ray_idx], rays_d[ray_idx], far,
+                        self.triangles[tri_idx], epsilon
                     )
-                    del test_i
-                    update_mask = test_uvt.z < uvt[ray_idx].z
-                    uvt[ray_idx] = torch.where(update_mask, test_uvt, uvt[ray_idx])
-                    i[ray_idx] = torch.where(update_mask, tri_idx.unsqueeze(-1), i[ray_idx])
-                    del test_uvt, tri_idx, update_mask
-                del tri_hits, ray_idx
+                    t.scatter_reduce_(0, ray_idx.unsqueeze(-1), test_t, 'amin')
+                    i[ray_idx] = torch.where(test_t <= t[ray_idx], tri_idx.unsqueeze(-1), i[ray_idx])
+                    del test_t, tri_idx, ray_idx
+                del tri_hits
                 live_ray &= traverser != 0
-            traverser = traverser[live_ray]
-            if len(traverser) == 0:
+            live_ray = live_ray.nonzero(as_tuple=True)
+            if len(live_ray[0]) == 0:
                 break
+            traverser = traverser[live_ray]
             live_idx = live_idx[live_ray]
             del live_ray
-        return uvt, i
+        return t, self.rank[i]
