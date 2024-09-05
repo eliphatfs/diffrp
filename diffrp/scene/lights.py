@@ -18,11 +18,17 @@ class Light(object):
 
 @dataclass
 class DirectionalLight(Light):
+    """
+    Directional light data structure; Not supported yet.
+    """
     direction: torch.Tensor
 
 
 @dataclass
 class PointLight(Light):
+    """
+    Point light data structure; Not supported yet.
+    """
     position: torch.Tensor
 
 
