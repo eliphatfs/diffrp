@@ -35,17 +35,17 @@ class BruteForceRaycaster(Raycaster):
         e1 = v1 - v0
         e2 = v2 - v0
         cr = cross(rays_d, e2)
-        det = dot(e1, cr)
+        det = dot(e1, cr, keepdim=False)
         inv_det = torch.reciprocal(det)
         s = rays_o - v0
-        u = inv_det * dot(s, cr)
+        u = inv_det * dot(s, cr, keepdim=False)
         scross1 = cross(s, e1)
-        v = inv_det * dot(rays_d, scross1)
-        t = inv_det * dot(e2, scross1)  # ..., M, 1
+        v = inv_det * dot(rays_d, scross1, keepdim=False)
+        t = inv_det * dot(e2, scross1, keepdim=False)  # ..., M
         hit_mask = (
             (torch.abs(det) > epsilon) & (u >= 0) & (v >= 0) & (u + v <= 1) & (t > 0)
         )
-        t = torch.where(hit_mask, t, far)  # ..., M, 1
+        t = torch.where(hit_mask, t, far)  # ..., M
         return t
 
     @torch.no_grad()
@@ -58,8 +58,8 @@ class BruteForceRaycaster(Raycaster):
             rays_o.unsqueeze(-2), rays_d.unsqueeze(-2), far, self.triangles.unsqueeze(-4),
             self.config.get("epsilon", 1e-6)
         )
-        sel_tri = torch.argmin(t, dim=-2, keepdim=True)  # ..., M, 1 -> ..., 1, 1
-        sel_t = torch.gather(t, -2, sel_tri).squeeze(-1)  # ..., 1
+        sel_tri = torch.argmin(t, dim=-1, keepdim=True)  # ..., M -> ..., 1
+        sel_t = torch.gather(t, -1, sel_tri).squeeze(-1)  # ...
         fill_idx = sel_tri.squeeze(-1)
         return sel_t, fill_idx
 
@@ -176,12 +176,12 @@ class NaivePBBVH(Raycaster):
         # ^N^, 3
         # R, 3
         live_idx = torch.arange(len(traverser), device=traverser.device)
-        t = full_like_vec(rays_o, far, 1)  # R, 3
-        i = torch.zeros([len(rays_o), 1], device=traverser.device, dtype=torch.int64)
+        t = rays_o.new_full(rays_o.shape[:-1], far)  # R
+        i = torch.zeros([len(rays_o)], device=traverser.device, dtype=torch.int64)
         tri_start = (1 << self.n) - 1
         while True:
             live_ray = traverser >= 0
-            t_live = t[live_idx].squeeze(-1)
+            t_live = t[live_idx]
             rays_o_live = rays_o[live_idx]
             rays_d_live = rays_d[live_idx]
             for _ in range((self.n + 1) // 2):
@@ -197,8 +197,8 @@ class NaivePBBVH(Raycaster):
                         rays_o[ray_idx], rays_d[ray_idx], far,
                         self.triangles[tri_idx], epsilon
                     )
-                    t.scatter_reduce_(0, ray_idx.unsqueeze(-1), test_t, 'amin')
-                    i[ray_idx] = torch.where(test_t <= t[ray_idx], tri_idx.unsqueeze(-1), i[ray_idx])
+                    t.scatter_reduce_(0, ray_idx, test_t, 'amin')
+                    i[ray_idx] = torch.where(test_t <= t[ray_idx], tri_idx, i[ray_idx])
                     del test_t, tri_idx, ray_idx
                 del tri_hits
                 traverser = torch.where(intersect_mask, self.scan_next[traverser], self.skip_next[traverser])

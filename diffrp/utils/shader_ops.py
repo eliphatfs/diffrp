@@ -610,11 +610,14 @@ def _make_attr(attr: str, idx: str):
 
 
 if hasattr(torch.linalg, 'vecdot'):
-    def dot(a: torch.Tensor, b: torch.Tensor):
-        return torch.linalg.vecdot(a, b).unsqueeze(-1)
+    def dot(a: torch.Tensor, b: torch.Tensor, keepdim: bool = True):
+        if keepdim:
+            return torch.linalg.vecdot(a, b).unsqueeze(-1)
+        else:
+            return torch.linalg.vecdot(a, b)
 else:
-    def dot(a: torch.Tensor, b: torch.Tensor):
-        return (a * b).sum(-1, keepdim=True)
+    def dot(a: torch.Tensor, b: torch.Tensor, keepdim: bool = True):
+        return (a * b).sum(-1, keepdim=keepdim)
 
 if hasattr(torch.linalg, 'cross'):
     def cross(a: torch.Tensor, b: torch.Tensor):
