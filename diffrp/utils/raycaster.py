@@ -157,16 +157,17 @@ class NaivePBBVH(Raycaster):
     @torch.jit.script
     def _ray_box_intersect_impl(
         bmins: torch.Tensor, bmaxs: torch.Tensor, traverser: torch.Tensor,
-        rays_o_live: torch.Tensor, rays_d_live: torch.Tensor, t_live: torch.Tensor
+        rays_o_live: torch.Tensor, rays_d_live: torch.Tensor, t_live: torch.Tensor,
+        tri_start: int
     ):
         bound_min = bmins[traverser]
         bound_max = bmaxs[traverser]
         t1 = (bound_min - rays_o_live) / rays_d_live  # R, 3
         t2 = (bound_max - rays_o_live) / rays_d_live  # R, 3
-        t_min = torch.minimum(t1, t2).max(-1).values
-        t_max = torch.maximum(t1, t2).min(-1).values
+        t_min = torch.min(t1, t2).max(-1).values
+        t_max = torch.max(t1, t2).min(-1).values
         intersect_mask = (t_min <= t_live) & (t_max > 0) & (t_min <= t_max)
-        return intersect_mask
+        return intersect_mask, intersect_mask & (traverser >= tri_start)
 
     @torch.no_grad()
     def query(self, rays_o: torch.Tensor, rays_d: torch.Tensor, far: float):
@@ -183,13 +184,12 @@ class NaivePBBVH(Raycaster):
             t_live = t[live_idx].squeeze(-1)
             rays_o_live = rays_o[live_idx]
             rays_d_live = rays_d[live_idx]
-            for _ in range(self.n // 2 + 1):
-                intersect_mask = NaivePBBVH._ray_box_intersect_impl(
-                    self.bmins, self.bmaxs, traverser, rays_o_live, rays_d_live, t_live
+            for _ in range((self.n + 1) // 2):
+                intersect_mask, tri_candidate = NaivePBBVH._ray_box_intersect_impl(
+                    self.bmins, self.bmaxs, traverser, rays_o_live, rays_d_live, t_live, tri_start
                 )
-                traverser = torch.where(intersect_mask, self.scan_next[traverser], self.skip_next[traverser])
 
-                tri_hits = (traverser >= tri_start).nonzero(as_tuple=True)
+                tri_hits = tri_candidate.nonzero(as_tuple=True)
                 if len(tri_hits[0]) > 0:
                     ray_idx = live_idx[tri_hits]
                     tri_idx = traverser[tri_hits] - tri_start
@@ -201,6 +201,7 @@ class NaivePBBVH(Raycaster):
                     i[ray_idx] = torch.where(test_t <= t[ray_idx], tri_idx.unsqueeze(-1), i[ray_idx])
                     del test_t, tri_idx, ray_idx
                 del tri_hits
+                traverser = torch.where(intersect_mask, self.scan_next[traverser], self.skip_next[traverser])
                 live_ray &= traverser != 0
             live_ray = live_ray.nonzero(as_tuple=True)
             if len(live_ray[0]) == 0:
