@@ -1,7 +1,7 @@
 import math
 import torch
 import torch.nn.functional as F
-from typing import Optional
+from typing import Optional, Union
 from .cache import singleton_cached
 from .coordinates import angles_to_unit_direction, unit_direction_to_latlong_uv, latlong_grid
 from .shader_ops import normalized, float2, float3, cross, dot, sample2d, to_bchw, to_hwc, saturate, sample3d, fma
@@ -38,34 +38,32 @@ def normal_distribution_function_ggx(n_dot_h: torch.Tensor, roughness: float):
     return (a * a / math.pi) / (f * f)
 
 
-def importance_sample_ggx(x: torch.Tensor, y: torch.Tensor, n: torch.Tensor, roughness: float):
+def importance_sample_ggx(x: torch.Tensor, y: torch.Tensor, n: torch.Tensor, roughness: Union[float, torch.Tensor]):
     """
     GGX Importance Sampling.
-
-    Note:
-        Due to different roughness values usually require different resolutions of `n`,
-        we do not support batched roughness values in this function.
 
     Args:
         x (torch.Tensor): sample sequence element 1, shape (n) in [0, 1)
         y (torch.Tensor): sample sequence element 2, shape (n) in [0, 1)
         n (torch.Tensor): (batched) normal vectors, shape (..., 3)
-        roughness (float): the roughness level
+        roughness (float | torch.Tensor): the roughness level, single value or tensor of shape (...) in (0, 1]
     
     Returns:
         torch.Tensor: sampled ray directions, shape (n, ..., 3)
     """
-    return _importance_sample_ggx_impl(x, y, n, roughness)
+    if isinstance(roughness, float):
+        return _importance_sample_ggx_impl_singler(x, y, n, roughness)
+    else:
+        return _importance_sample_ggx_impl_batchr(x, y, n, roughness)
 
 
 @torch.jit.script
-def _importance_sample_ggx_impl(x: torch.Tensor, y: torch.Tensor, n: torch.Tensor, roughness: float):
+def _importance_sample_ggx_impl_batchr(x: torch.Tensor, y: torch.Tensor, n: torch.Tensor, roughness: torch.Tensor):
+    x = x.reshape([-1] + [1] * roughness.ndim)
+    y = y.reshape([-1] + [1] * roughness.ndim)
     a = roughness * roughness
     phi = math.tau * x
-    if roughness < 1e-4:
-        cos_theta = torch.ones_like(y)
-    else:
-        cos_theta = torch.sqrt((1 - y) / (1 + (a * a - 1) * y))
+    cos_theta = torch.sqrt((1 - y) / (1 + (a * a - 1) * y))
     sin_theta = torch.sqrt(1 - cos_theta * cos_theta)
     hx = torch.cos(phi) * sin_theta
     hy = torch.sin(phi) * sin_theta
@@ -77,8 +75,30 @@ def _importance_sample_ggx_impl(x: torch.Tensor, y: torch.Tensor, n: torch.Tenso
     tangent = normalized(cross(up, n))
     bitangent = cross(n, tangent)
     # n: ..., 3
-    # h*: n
-    h_broadcast = [-1] + [1] * n.ndim
+    # h*: n, ...
+    hx, hy, hz = [m.unsqueeze(-1) for m in [hx, hy, hz]]
+    sample_vec = tangent * hx + bitangent * hy + n * hz
+    return sample_vec
+
+
+@torch.jit.script
+def _importance_sample_ggx_impl_singler(x: torch.Tensor, y: torch.Tensor, n: torch.Tensor, roughness: float):
+    a = roughness * roughness
+    phi = math.tau * x
+    cos_theta = torch.sqrt((1 - y) / (1 + (a * a - 1) * y))
+    sin_theta = torch.sqrt(1 - cos_theta * cos_theta)
+    hx = torch.cos(phi) * sin_theta
+    hy = torch.sin(phi) * sin_theta
+    hz = cos_theta
+    up = torch.eye(3, dtype=n.dtype, device=n.device)[torch.where(
+        n[..., 1] < 0.999, 1, 0
+    )]
+    # cannot use .y and .new_tensor shorthands for jit scripted function
+    tangent = normalized(cross(up, n))
+    bitangent = cross(n, tangent)
+    # n: ..., 3
+    # h*: n; ..., n
+    h_broadcast = [-1] + [1] * n.ndim  # n, ...1, 1
     hx, hy, hz = [m.reshape(h_broadcast) for m in [hx, hy, hz]]
     sample_vec = tangent * hx + bitangent * hy + n * hz
     return sample_vec
