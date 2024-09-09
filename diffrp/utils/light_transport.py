@@ -32,6 +32,17 @@ def _hammersley_impl(n: int, deterministic: bool, device: Optional[torch.device]
     return x, y
 
 
+@torch.jit.script
+def combine_fixed_tangent_space(x: torch.Tensor, y: torch.Tensor, z: torch.Tensor, n: torch.Tensor):
+    up = torch.eye(3, dtype=n.dtype, device=n.device)[torch.where(
+        n[..., 1] < 0.999, 1, 0
+    )]
+    # cannot use .y and .new_tensor shorthands for jit scripted function
+    right = normalized(cross(up, n))
+    up = cross(n, right)
+    return x * right + z * up + y * n
+
+
 def normal_distribution_function_ggx(n_dot_h: torch.Tensor, roughness: float):
     a = roughness * roughness
     f = n_dot_h * n_dot_h * (a * a - 1) + 1
@@ -66,19 +77,12 @@ def _importance_sample_ggx_impl_batchr(x: torch.Tensor, y: torch.Tensor, n: torc
     cos_theta = torch.sqrt((1 - y) / (1 + (a * a - 1) * y))
     sin_theta = torch.sqrt(1 - cos_theta * cos_theta)
     hx = torch.cos(phi) * sin_theta
-    hy = torch.sin(phi) * sin_theta
-    hz = cos_theta
-    up = torch.eye(3, dtype=n.dtype, device=n.device)[torch.where(
-        n[..., 1] < 0.999, 1, 0
-    )]
-    # cannot use .y and .new_tensor shorthands for jit scripted function
-    tangent = normalized(cross(up, n))
-    bitangent = cross(n, tangent)
+    hz = torch.sin(phi) * sin_theta
+    hy = cos_theta
     # n: ..., 3
     # h*: n, ...
     hx, hy, hz = [m.unsqueeze(-1) for m in [hx, hy, hz]]
-    sample_vec = tangent * hx + bitangent * hy + n * hz
-    return sample_vec
+    return combine_fixed_tangent_space(hx, hy, hz, n)
 
 
 @torch.jit.script
@@ -88,20 +92,13 @@ def _importance_sample_ggx_impl_singler(x: torch.Tensor, y: torch.Tensor, n: tor
     cos_theta = torch.sqrt((1 - y) / (1 + (a * a - 1) * y))
     sin_theta = torch.sqrt(1 - cos_theta * cos_theta)
     hx = torch.cos(phi) * sin_theta
-    hy = torch.sin(phi) * sin_theta
-    hz = cos_theta
-    up = torch.eye(3, dtype=n.dtype, device=n.device)[torch.where(
-        n[..., 1] < 0.999, 1, 0
-    )]
-    # cannot use .y and .new_tensor shorthands for jit scripted function
-    tangent = normalized(cross(up, n))
-    bitangent = cross(n, tangent)
+    hz = torch.sin(phi) * sin_theta
+    hy = cos_theta
     # n: ..., 3
     # h*: n; ..., n
     h_broadcast = [-1] + [1] * n.ndim  # n, ...1, 1
     hx, hy, hz = [m.reshape(h_broadcast) for m in [hx, hy, hz]]
-    sample_vec = tangent * hx + bitangent * hy + n * hz
-    return sample_vec
+    return combine_fixed_tangent_space(hx, hy, hz, n)
 
 
 def prefilter_env_map(
@@ -171,13 +168,10 @@ def irradiance_integral_env_map(
     phi, theta = latlong_grid(H, W, env.dtype, env.device)
     x, y, z = angles_to_unit_direction(theta, phi)
     n = float3(x, y, z)[..., None, None, :]  # h, w, 3 -> h, w, 1, 1, 3
-    up = torch.eye(3, dtype=env.dtype, device=env.device)[1].expand_as(n)
-    right = normalized(cross(up, n))
-    up = normalized(cross(n, right)) # h, w, 1, 1, 3
     sample_phi, sample_theta = latlong_grid(HP * 2, WP * 2, env.dtype, env.device)
     sample_phi = sample_phi[:len(sample_phi) // 2]
     x, y, z = angles_to_unit_direction(sample_theta, sample_phi)  # tangent space, hp, wp, 1
-    uv = float2(*unit_direction_to_latlong_uv(x * right + z * up + y * n))  # h, w, hp, wp, 2
+    uv = float2(*unit_direction_to_latlong_uv(combine_fixed_tangent_space(x, y, z, n)))  # h, w, hp, wp, 2
     values = sample2d(env, uv) * torch.cos(sample_phi) * torch.sin(sample_phi)  # h, w, hp, wp, 3
     # sample_phi: hp, 1, 1
     values = values.mean([-2, -3])
