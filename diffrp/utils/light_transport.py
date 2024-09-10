@@ -51,16 +51,17 @@ def normal_distribution_function_ggx(n_dot_h: torch.Tensor, roughness: float):
 
 def importance_sample_ggx(x: torch.Tensor, y: torch.Tensor, n: torch.Tensor, roughness: Union[float, torch.Tensor]):
     """
-    GGX Importance Sampling.
+    GGX Importance Sampling. Samples a batch of rays if roughness is a single float value,
+    or samples a single ray for each (broadcastable) element if roughness is a tensor.
 
     Args:
-        x (torch.Tensor): sample sequence element 1, shape (n) in [0, 1)
-        y (torch.Tensor): sample sequence element 2, shape (n) in [0, 1)
-        n (torch.Tensor): (batched) normal vectors, shape (..., 3)
-        roughness (float | torch.Tensor): the roughness level, single value or tensor of shape (...) in (0, 1]
+        x (torch.Tensor): sample sequence element 1, shape (n) in [0, 1) if roughness is float, otherwise shape (..., 1) when roughness is tensor.
+        y (torch.Tensor): sample sequence element 2, shape (n) in [0, 1) if roughness is float, otherwise shape (..., 1) when roughness is tensor.
+        n (torch.Tensor): (batched) normal vectors, shape (..., 3).
+        roughness (float | torch.Tensor): the roughness level, single value or tensor of shape (..., 1) in (0, 1].
     
     Returns:
-        torch.Tensor: sampled ray directions, shape (n, ..., 3)
+        torch.Tensor: sampled ray directions, shape (n, ..., 3) if roughness is float, otherwise shape (..., 3).
     """
     if isinstance(roughness, float):
         return _importance_sample_ggx_impl_singler(x, y, n, roughness)
@@ -70,8 +71,6 @@ def importance_sample_ggx(x: torch.Tensor, y: torch.Tensor, n: torch.Tensor, rou
 
 @torch.jit.script
 def _importance_sample_ggx_impl_batchr(x: torch.Tensor, y: torch.Tensor, n: torch.Tensor, roughness: torch.Tensor):
-    x = x.reshape([-1] + [1] * roughness.ndim)
-    y = y.reshape([-1] + [1] * roughness.ndim)
     a = roughness * roughness
     phi = math.tau * x
     cos_theta = torch.sqrt((1 - y) / (1 + (a * a - 1) * y))
@@ -80,8 +79,7 @@ def _importance_sample_ggx_impl_batchr(x: torch.Tensor, y: torch.Tensor, n: torc
     hz = torch.sin(phi) * sin_theta
     hy = cos_theta
     # n: ..., 3
-    # h*: n, ...
-    hx, hy, hz = [m.unsqueeze(-1) for m in [hx, hy, hz]]
+    # h*: ..., 1
     return combine_fixed_tangent_space(hx, hy, hz, n)
 
 
@@ -95,7 +93,7 @@ def _importance_sample_ggx_impl_singler(x: torch.Tensor, y: torch.Tensor, n: tor
     hz = torch.sin(phi) * sin_theta
     hy = cos_theta
     # n: ..., 3
-    # h*: n; ..., n
+    # h*: n
     h_broadcast = [-1] + [1] * n.ndim  # n, ...1, 1
     hx, hy, hz = [m.reshape(h_broadcast) for m in [hx, hy, hz]]
     return combine_fixed_tangent_space(hx, hy, hz, n)
