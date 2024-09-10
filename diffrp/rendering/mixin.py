@@ -1,11 +1,12 @@
 import torch
-from typing import List
 from ..scene import Scene
 from .camera import Camera
 from ..utils.cache import cached
+from typing import List, Callable, Union, Tuple
+from .interpolator import MaskedSparseInterpolator
 from ..utils.coordinates import near_plane_ndc_grid
-from ..materials.base_material import VertexArrayObject
-from ..utils.shader_ops import small_matrix_inverse, normalized, zeros_like_vec, transform_point4x3
+from ..materials.base_material import VertexArrayObject, SurfaceInput, SurfaceOutputStandard
+from ..utils.shader_ops import small_matrix_inverse, normalized, zeros_like_vec, transform_point4x3, gpu_f32
 
 
 class RenderSessionMixin:
@@ -110,3 +111,36 @@ class RenderSessionMixin:
             self._checked_cat([obj.tangents for obj in objs], verts_ref, 4),
             {k: torch.cat([obj.custom_attrs[k] for obj in objs]) for k in total_custom_attrs}
         )
+
+    def _gbuffer_collect_layer_impl_stencil_masked(
+        self,
+        mats: List[Tuple[SurfaceInput, SurfaceOutputStandard]],
+        operator: Callable[[SurfaceInput, SurfaceOutputStandard], torch.Tensor],
+        default: Union[List[float], torch.Tensor]
+    ):
+        h, w = self.camera.resolution()
+        if default == [default[0]] * len(default):
+            defaults = torch.full([1, h, w, len(default)], default[0], dtype=torch.float32, device='cuda')
+        else:
+            defaults = gpu_f32(default).expand(1, h, w, len(default))
+        
+        buffer = defaults
+        indices = []
+        values = []
+        nind = 0
+        for si, so in mats:
+            interpolator: MaskedSparseInterpolator = si.interpolator
+            if len(si.interpolator.indices[0]) == 0:
+                continue
+            op = operator(si, so)
+            if op is not None:
+                nind = len(interpolator.indices)
+                indices.append(interpolator.indices)
+                values.append(op)
+        if len(indices) == 1:
+            buffer = buffer.index_put(indices[0], values[0])
+        elif nind != 0:
+            indices = tuple(torch.cat([x[i] for x in indices]) for i in range(nind))
+            values = torch.cat(values)
+            buffer = buffer.index_put(indices, values)
+        return buffer

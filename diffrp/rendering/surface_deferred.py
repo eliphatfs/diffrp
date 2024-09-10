@@ -1,4 +1,5 @@
 import torch
+import warnings
 import nvdiffrast.torch as dr
 from dataclasses import dataclass
 from typing_extensions import Literal
@@ -90,7 +91,7 @@ class SurfaceDeferredRenderSessionOptions:
             Memory is quadratic to this parameter.
     """
     max_layers: int = 0
-    intepolator_impl: Literal['full_screen', 'stencil_masked'] = 'stencil_masked'
+    interpolator_impl: Literal['full_screen', 'stencil_masked'] = 'stencil_masked'
 
     deterministic: bool = True
 
@@ -103,6 +104,16 @@ class SurfaceDeferredRenderSessionOptions:
     def __post_init__(self):
         if self.max_layers <= 0:
             self.max_layers = 32767
+
+    @property
+    def intepolator_impl(self):
+        warnings.warn("`intepolator_impl` is deprecated, please use `interpolator_impl` instead.")
+        return self.interpolator_impl
+    
+    @intepolator_impl.setter
+    def intepolator_impl(self, value):
+        warnings.warn("`intepolator_impl` is deprecated, please use `interpolator_impl` instead.")
+        self.interpolator_impl = value
 
 
 class _EdgeGradient(torch.autograd.Function):
@@ -268,14 +279,14 @@ class SurfaceDeferredRenderSession(RenderSessionMixin):
         cam_p = self.camera_P()
         for rast in r_layers:
             mats = []
-            if self.options.intepolator_impl == 'stencil_masked':
+            if self.options.interpolator_impl == 'stencil_masked':
                 vi_idx = rast[..., -1].long()
                 stencil_buf = vao.stencils[vi_idx]
             for pi, x in enumerate(self.scene.objects):
                 su = SurfaceUniform(x.M, cam_v, cam_p)
-                if self.options.intepolator_impl == 'full_screen':
+                if self.options.interpolator_impl == 'full_screen':
                     si = SurfaceInput(su, vao, FullScreenInterpolator(rast, vao.tris))
-                elif self.options.intepolator_impl == 'stencil_masked':
+                elif self.options.interpolator_impl == 'stencil_masked':
                     si = SurfaceInput(su, vao, MaskedSparseInterpolator(rast, vao.tris, stencil_buf == pi + 1))
                     if len(si.interpolator.indices[0]) == 0:
                         mats.append((si, SurfaceOutputStandard()))
@@ -310,45 +321,24 @@ class SurfaceDeferredRenderSession(RenderSessionMixin):
         vao = self.vertex_array_object()
         h, w = self.camera.resolution()
         gbuffers = []
-        if self.options.intepolator_impl == 'stencil_masked':
-            if default == [default[0]] * len(default):
-                defaults = torch.full([1, h, w, len(default)], default[0], dtype=torch.float32, device='cuda')
-            else:
-                defaults = gpu_f32(default).expand(1, h, w, len(default))
+        if self.options.interpolator_impl == 'stencil_masked':
+            return [
+                self._gbuffer_collect_layer_impl_stencil_masked(mats, operator, default)
+                for mats in self.layer_material()
+            ]
+        assert self.options.interpolator_impl == 'full_screen', "Unrecognized `interpolator_impl` '%s'" % self.options.interpolator_impl
         for rast, mats in zip(self.rasterize(), self.layer_material()):
-            if self.options.intepolator_impl == 'full_screen':
-                buffer = [gpu_f32(default).expand(1, h, w, len(default))]
-                stencil_lookup = [0]
-                for si, so in mats:
-                    op = operator(si, so)
-                    if op is None:
-                        stencil_lookup.append(0)
-                    else:
-                        stencil_lookup.append(len(buffer))
-                        buffer.append(op)
-                stencil_lookup = vao.stencils.new_tensor(stencil_lookup)
-                gbuffers.append(torch.gather(torch.cat(buffer), 0, stencil_lookup[vao.stencils][rast.a.long()].repeat_interleave(len(default), dim=-1).long()))
-            elif self.options.intepolator_impl == 'stencil_masked':
-                buffer = defaults
-                indices = []
-                values = []
-                nind = 0
-                for si, so in mats:
-                    interpolator: MaskedSparseInterpolator = si.interpolator
-                    if len(si.interpolator.indices[0]) == 0:
-                        continue
-                    op = operator(si, so)
-                    if op is not None:
-                        nind = len(interpolator.indices)
-                        indices.append(interpolator.indices)
-                        values.append(op)
-                if len(indices) == 1:
-                    buffer = buffer.index_put(indices[0], values[0])
-                elif nind != 0:
-                    indices = tuple(torch.cat([x[i] for x in indices]) for i in range(nind))
-                    values = torch.cat(values)
-                    buffer = buffer.index_put(indices, values)
-                gbuffers.append(buffer)
+            buffer = [gpu_f32(default).expand(1, h, w, len(default))]
+            stencil_lookup = [0]
+            for si, so in mats:
+                op = operator(si, so)
+                if op is None:
+                    stencil_lookup.append(0)
+                else:
+                    stencil_lookup.append(len(buffer))
+                    buffer.append(op)
+            stencil_lookup = vao.stencils.new_tensor(stencil_lookup)
+            gbuffers.append(torch.gather(torch.cat(buffer), 0, stencil_lookup[vao.stencils][rast.a.long()].repeat_interleave(len(default), dim=-1).long()))
         return gbuffers
 
     def compose_layers(
