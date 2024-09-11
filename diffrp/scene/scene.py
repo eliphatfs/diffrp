@@ -4,7 +4,7 @@ from typing import List
 from .lights import Light
 from .objects import MeshObject
 from typing_extensions import Self
-from ..utils import transform_point4x3
+from ..utils.shader_ops import transform_point4x3, transform_vector3x3, float4, normalized
 
 
 class Scene:
@@ -57,11 +57,11 @@ class Scene:
                 x.material,
                 torch.cat([transform_point4x3(x.verts, x.M) for x in meshes]),
                 torch.cat(tris),
-                torch.cat([x.normals for x in meshes]),
+                torch.cat([normalized(transform_vector3x3(x.normals, x.M)) for x in meshes]),
                 torch.eye(4, dtype=torch.float32, device=x.verts.device),
                 torch.cat([x.color for x in meshes]),
                 torch.cat([x.uv for x in meshes]),
-                torch.cat([x.tangents for x in meshes]),
+                torch.cat([float4(normalized(transform_vector3x3(x.tangents.xyz, x.M)), x.tangents.w) for x in meshes]),
                 {k: torch.cat([x.custom_attrs[k] for x in meshes]) for k in x.custom_attrs}
             )
 
