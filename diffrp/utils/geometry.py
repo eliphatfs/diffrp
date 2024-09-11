@@ -110,6 +110,25 @@ def _barycentric_impl(a: torch.Tensor, b: torch.Tensor, c: torch.Tensor, p: torc
     return torch.stack([u, v, w], dim=-1)
 
 
-def barycentric(a, b, c, p):
-    # returns u, v, w: p = ua + vb + wc
+def _cancel_nan(x):
+    return torch.nan_to_num(x)
+
+
+def _cancel_nans(*tensors: torch.Tensor):
+    for tnsr in tensors:
+        if tnsr.requires_grad:
+            tnsr.register_hook(_cancel_nan)
+
+
+def barycentric(a: torch.Tensor, b: torch.Tensor, c: torch.Tensor, p: torch.Tensor):
+    """
+    Computes barycentric coordinates from a point ``p`` and triangle vertices ``a``, ``b`` and ``c``.
+
+    Args:
+        Takes broadcastable inputs of (..., 3).
+    
+    Returns:
+        torch.Tensor: Stacked ``(u, v, w)`` tensor of shape (..., 3) s.t. ``p = ua + vb + wc``.
+    """
+    _cancel_nans(a, b, c, p)
     return _barycentric_impl(a, b, c, p)
