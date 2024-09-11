@@ -2,6 +2,34 @@ import torch
 from .shader_ops import fsa
 
 
+PU_A  =  1.41283765e+03
+PU_B  =  1.64593172e+00
+PU_C  =  4.31384981e-01
+PU_D  = -2.94139609e-03
+PU_E  =  1.92653254e-01
+PU_F  =  6.26026094e-03
+PU_G  =  9.98620152e-01
+PU_Y0 =  1.57945760e-06
+PU_Y1 =  3.22087631e-02
+PU_X0 =  2.23151711e-03
+PU_X1 =  3.70974749e-01
+
+
+def linear_to_pu(y):
+  return torch.where(y <= PU_Y0,
+                     PU_A * y,
+                     torch.where(y <= PU_Y1,
+                                 PU_B * torch.pow(y, PU_C)  + PU_D,
+                                 PU_E * torch.log(y + PU_F) + PU_G))
+
+def pu_to_linear(x):
+  return torch.where(x <= PU_X0,
+                     x / PU_A,
+                     torch.where(x <= PU_X1,
+                                 torch.pow((x - PU_D) / PU_B, 1./PU_C),
+                                 torch.exp((x - PU_G) / PU_E) - PU_F))
+
+
 def linear_to_srgb(rgb: torch.Tensor) -> torch.Tensor:
     """
     Converts from linear space to sRGB space.
