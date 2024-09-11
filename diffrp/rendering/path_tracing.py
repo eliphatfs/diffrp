@@ -209,9 +209,12 @@ class PathTracingSession(RenderSessionMixin):
             grid = grid.reshape(-1, 4)
             rays_o, rays_d = self._view_dir_impl(grid, cam_v, cam_p, self.camera_VP())
             transfer = ones_like_vec(rays_o, radiance_channels)
+            # live_idx = torch.arange(len(grid), device=grid.device)
             for d in range(self.options.ray_depth):
                 t, i = raycaster.query(rays_o, rays_d, far)
                 ray_outputs = sampler(rays_o, rays_d, t, i, d)
+                # radiance = radiance.index_add(0, live_idx % len(radiance), transfer * ray_outputs.radiance)
+                # alpha = alpha.index_add(0, live_idx % len(alpha), ray_outputs.alpha)
                 radiance = radiance + (transfer * ray_outputs.radiance).view(espp, -1, radiance_channels).sum(0)
                 alpha = alpha + ray_outputs.alpha.reshape(espp, -1, 1).sum(0)
                 transfer = transfer * ray_outputs.transfer
@@ -224,6 +227,11 @@ class PathTracingSession(RenderSessionMixin):
                         else:
                             extras_c[k] += espp
                             extras_v[k] = extras_v[k] + v.reshape(espp, H, W, v.shape[-1]).sum(0)
+                # live_step = (t < far).nonzero().squeeze(-1)
+                # live_idx = live_idx[live_step]
+                # rays_o = rays_o[live_step]
+                # rays_d = rays_d[live_step]
+                # transfer = transfer[live_step]
         radiance = radiance.reshape(H, W, radiance_channels) / self.options.ray_spp
         alpha = saturate(alpha.reshape(H, W, 1) / self.options.ray_spp)
         for k in extras_v:
