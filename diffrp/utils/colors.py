@@ -37,7 +37,7 @@ def linear_to_srgb(rgb: torch.Tensor) -> torch.Tensor:
 
     The output has the same shape as the input.
     """
-    if torch.is_grad_enabled():
+    if rgb.requires_grad:
         rgb = torch.clamp_min(rgb, 1e-5)
     return torch.where(rgb < 0.0031308, 12.92 * rgb, fsa(1.055, rgb ** (1 / 2.4), -0.055))
 
@@ -48,7 +48,7 @@ def srgb_to_linear(rgb: torch.Tensor) -> torch.Tensor:
 
     The output has the same shape as the input.
     """
-    if torch.is_grad_enabled():
+    if rgb.requires_grad:
         rgb = torch.clamp_min(rgb, 1e-5)
     return torch.where(rgb < 0.04045, rgb * (1 / 12.92), (1 / 1.055) * ((rgb + 0.055) ** 2.4))
 
