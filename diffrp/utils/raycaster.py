@@ -197,8 +197,8 @@ class NaivePBBVH(Raycaster):
                         rays_o[ray_idx], rays_d[ray_idx], far,
                         self.triangles[tri_idx], epsilon
                     )
-                    t.scatter_reduce_(0, ray_idx, test_t, 'amin')
                     i[ray_idx] = torch.where(test_t <= t[ray_idx], tri_idx, i[ray_idx])
+                    t.scatter_reduce_(0, ray_idx, test_t, 'amin')
                     del test_t, tri_idx, ray_idx
                 del tri_hits
                 traverser = torch.where(intersect_mask, self.scan_next[traverser], self.skip_next[traverser])
