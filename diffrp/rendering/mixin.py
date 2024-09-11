@@ -2,11 +2,11 @@ import torch
 from ..scene import Scene
 from .camera import Camera
 from ..utils.cache import cached
+from ..utils.shader_ops import *
 from typing import List, Callable, Union, Tuple
 from .interpolator import MaskedSparseInterpolator
 from ..utils.coordinates import near_plane_ndc_grid
 from ..materials.base_material import VertexArrayObject, SurfaceInput, SurfaceOutputStandard
-from ..utils.shader_ops import small_matrix_inverse, normalized, zeros_like_vec, transform_point4x3, gpu_f32
 
 
 class RenderSessionMixin:
@@ -112,19 +112,28 @@ class RenderSessionMixin:
             {k: torch.cat([obj.custom_attrs[k] for obj in objs]) for k in total_custom_attrs}
         )
 
+    def _collector_world_normal(self, si: SurfaceInput, so: SurfaceOutputStandard):
+        if so.normal is None:
+            return si.world_normal
+        if so.normal_space == 'tangent':
+            vn = si.world_normal_unnormalized
+            vnt = so.normal
+            vt, vs = si.world_tangent.xyz, si.world_tangent.w
+            vb = vs * cross(vn, vt)
+            return normalized(fma(vnt.x, vt, fma(vnt.y, vb, vnt.z * vn)))
+        if so.normal_space == 'object':
+            return normalized(transform_vector3x3(so.normal, si.uniforms.M))
+        if so.normal_space == 'world':
+            return normalized(so.normal)
+        assert False, "Unknown normal space: " + so.normal_space
+
     def _gbuffer_collect_layer_impl_stencil_masked(
         self,
         mats: List[Tuple[SurfaceInput, SurfaceOutputStandard]],
         operator: Callable[[SurfaceInput, SurfaceOutputStandard], torch.Tensor],
-        default: Union[List[float], torch.Tensor]
+        initial_buffer: torch.Tensor
     ):
-        h, w = self.camera.resolution()
-        if default == [default[0]] * len(default):
-            defaults = torch.full([1, h, w, len(default)], default[0], dtype=torch.float32, device='cuda')
-        else:
-            defaults = gpu_f32(default).expand(1, h, w, len(default))
-        
-        buffer = defaults
+        buffer = initial_buffer
         indices = []
         values = []
         nind = 0

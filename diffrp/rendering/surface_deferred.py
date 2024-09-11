@@ -322,8 +322,12 @@ class SurfaceDeferredRenderSession(RenderSessionMixin):
         h, w = self.camera.resolution()
         gbuffers = []
         if self.options.interpolator_impl == 'stencil_masked':
+            if default == [default[0]] * len(default):
+                defaults = torch.full([1, h, w, len(default)], default[0], dtype=torch.float32, device='cuda')
+            else:
+                defaults = gpu_f32(default).expand(1, h, w, len(default))
             return [
-                self._gbuffer_collect_layer_impl_stencil_masked(mats, operator, default)
+                self._gbuffer_collect_layer_impl_stencil_masked(mats, operator, defaults)
                 for mats in self.layer_material()
             ]
         assert self.options.interpolator_impl == 'full_screen', "Unrecognized `interpolator_impl` '%s'" % self.options.interpolator_impl
@@ -410,21 +414,6 @@ class SurfaceDeferredRenderSession(RenderSessionMixin):
     @cached
     def mso_layered(self) -> List[torch.Tensor]:
         return self.gbuffer_collect(self._collector_mso, [0.0, 0.5, 1.0])
-
-    def _collector_world_normal(self, si: SurfaceInput, so: SurfaceOutputStandard):
-        if so.normal is None:
-            return si.world_normal
-        if so.normal_space == 'tangent':
-            vn = si.world_normal_unnormalized
-            vnt = so.normal
-            vt, vs = si.world_tangent.xyz, si.world_tangent.w
-            vb = vs * cross(vn, vt)
-            return normalized(fma(vnt.x, vt, fma(vnt.y, vb, vnt.z * vn)))
-        if so.normal_space == 'object':
-            return normalized(transform_vector3x3(so.normal, si.uniforms.M))
-        if so.normal_space == 'world':
-            return normalized(so.normal)
-        assert False, "Unknown normal space: " + so.normal_space
 
     @cached
     def world_space_normal_layered(self) -> List[torch.Tensor]:
