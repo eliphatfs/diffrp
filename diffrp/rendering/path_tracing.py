@@ -13,7 +13,7 @@ from ..utils.shader_ops import *
 from .mixin import RenderSessionMixin
 from ..utils.geometry import barycentric
 from ..scene import Scene, ImageEnvironmentLight
-from ..utils.raycaster import NaivePBBVH, BruteForceRaycaster
+from ..utils.raycaster import NaivePBBVH, BruteForceRaycaster, TorchOptiX
 from .interpolator import MaskedSparseInterpolator, FullScreenInterpolator
 from ..utils.coordinates import near_plane_ndc_grid, unit_direction_to_latlong_uv
 from ..materials.base_material import SurfaceInput, SurfaceUniform, SurfaceOutputStandard
@@ -31,6 +31,7 @@ class PathTracingSessionOptions:
     pbr_ray_step_epsilon: float = 1e-3
     pbr_ray_last_bounce: Literal['void', 'skybox'] = 'void'
 
+    raycaster_impl: Literal['brute-force', 'naive-pbbvh', 'torchoptix'] = 'torchoptix'
     raycaster_epsilon: float = 1e-8
     raycaster_builder: Literal['morton', 'splitaxis'] = 'splitaxis'
 
@@ -64,11 +65,16 @@ class PathTracingSession(RenderSessionMixin):
     def raycaster(self):
         vao = self.vertex_array_object()
         cfg = {'epsilon': self.options.raycaster_epsilon}
-        if len(vao.tris) <= 3:
-            return BruteForceRaycaster(vao.world_pos, vao.tris, cfg)
+        if self.options.raycaster_impl == 'torchoptix':
+            return TorchOptiX(vao.world_pos, vao.tris, cfg)
+        elif self.options.raycaster_impl == 'naive-pbbvh':
+            if len(vao.tris) <= 3:
+                return BruteForceRaycaster(vao.world_pos, vao.tris, cfg)
+            else:
+                cfg['builder'] = self.options.raycaster_builder
+                return NaivePBBVH(vao.world_pos, vao.tris, cfg)
         else:
-            cfg['builder'] = self.options.raycaster_builder
-            return NaivePBBVH(vao.world_pos, vao.tris, cfg)
+            return BruteForceRaycaster(vao.world_pos, vao.tris, cfg)
 
     def layer_material_rays(self, rays_o, rays_d, t, i: torch.Tensor):
         cam_v = self.camera_V()

@@ -258,3 +258,37 @@ class NaivePBBVH(Raycaster):
             rays_d = rays_d[live_ray]
             del live_ray
         return t, self.rank[i]
+
+
+class TorchOptiX(Raycaster):
+    @torch.no_grad()
+    def build(self, verts: torch.Tensor, tris: torch.IntTensor, config: dict) -> None:
+        self.handle = None
+        import torchoptix
+        self.optix = torchoptix
+        self.verts = verts.contiguous()
+        self.tris = tris.contiguous()
+        self.handle = self.optix.build(
+            self.verts.data_ptr(), self.tris.data_ptr(),
+            len(verts), len(tris)
+        )
+
+    @torch.no_grad()
+    def query(self, rays_o: torch.Tensor, rays_d: torch.Tensor, far: float) -> Tuple[torch.Tensor]:
+        out_t = rays_o.new_empty([len(rays_o)])
+        out_i = rays_o.new_empty([len(rays_o)], dtype=torch.int32)
+        rays_o = rays_o.contiguous()
+        rays_d = rays_d.contiguous()
+        self.optix.trace_rays(
+            self.handle,
+            rays_o.data_ptr(),
+            rays_d.data_ptr(),
+            out_t.data_ptr(), out_i.data_ptr(),
+            far, len(rays_o)
+        )
+        return out_t, out_i
+
+    def __del__(self):
+        if self.handle is not None and self.optix is not None and self.optix.release is not None:
+            self.optix.release(self.handle)
+            self.handle = None
