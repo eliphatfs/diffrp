@@ -283,7 +283,7 @@ def sample3d(
     mode: str = "bilinear"
 ):
     """
-    Samples a 2D texture on UV coords.
+    Samples a 3D texture on UV coords.
 
     Args:
         texture3d (torch.Tensor):
