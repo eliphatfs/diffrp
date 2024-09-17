@@ -1,4 +1,5 @@
 import torch
+import trimesh
 from dataclasses import dataclass
 from typing_extensions import Literal
 from typing import Optional, Dict, Union
@@ -46,6 +47,9 @@ class MeshObject:
             Arbitrary attributes you want to bind to your vertices.
             Tensor of shape (V, \\*) for each attribute, dtype float32.
     """
+    # geometry_name
+    name: str
+    
     # material
     material: SurfaceMaterial
 
@@ -89,3 +93,5 @@ class MeshObject:
                     new_customs[k] = attr[f].flatten(0, 1)
                 self.custom_attrs = new_customs
         return self
+        
+        

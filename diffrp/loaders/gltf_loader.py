@@ -132,6 +132,7 @@ def load_gltf_scene(path: Union[str, BinaryIO], compute_tangents=False) -> Scene
     meshes: List[trimesh.Trimesh] = []
     transforms: List[torch.Tensor] = []
     discarded = 0
+    geometry_names: List[str] = []
     for node_name in scene.graph.nodes_geometry:
         transform, geometry_name = scene.graph[node_name]
         # get a copy of the geometry
@@ -139,15 +140,16 @@ def load_gltf_scene(path: Union[str, BinaryIO], compute_tangents=False) -> Scene
         if isinstance(current, trimesh.Trimesh):
             meshes.append(current)
             transforms.append(gpu_f32(transform))
+            geometry_names.append(geometry_name)
     logging.info("Loaded scene %s with %d submeshes and %d discarded curve/pcd geometry", path, len(meshes), discarded)
     material_cache = {}
-    for transform, mesh in zip(transforms, meshes):
+    for transform, mesh, geometry_name in zip(transforms, meshes, geometry_names):
         verts = gpu_f32(mesh.vertices)
         uv, color, mat = to_gltf_material(verts, mesh.visual, material_cache)
         # TODO: load vertex tangents if existing
         if 'vertex_normals' in mesh._cache and not compute_tangents:
             drp_scene.add_mesh_object(MeshObject(
-                mat, verts,
+                geometry_name, mat, verts,
                 gpu_i32(mesh.faces),
                 gpu_f32(mesh.vertex_normals),
                 transform, color, uv
