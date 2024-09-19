@@ -16,6 +16,20 @@ from diffrp.loaders.gltf_loader import load_gltf_scene
 scene = load_gltf_scene("spheres.glb")
 ```
 
+If you want to support normal maps, you will need to compute tangents with `compute_tangents=True`. This would require `gcc` to be installed,
+which is usually already fulfilled in most Linux and Mac distributions.
+For Windows the Strawberry Perl [(https://strawberryperl.com/)](https://strawberryperl.com/) distribution of `gcc` would be recommended.
+
+```python
+scene = load_gltf_scene("spheres.glb", compute_tangents=True)
+```
+
+Optionally, if you plan to render many frames with this scene, you can compute static batching to batch sub-objects with the same material into one to make future renders more efficient.
+
+```python
+scene = scene.static_batching()
+```
+
 ### 2. Creating a Camera
 
 We can create an orbital camera within DiffRP to look at the center of the scene. The scene is small so we place the camera quite close to the spheres.
@@ -243,7 +257,7 @@ Note that anti-aliasing operations do not currently support transparency.
 
 ### 9+. Transparent Film
 
-To disable the background to obtain a useful alpha mask, you can use the ``render_skybox`` parameter when adding environment light:
+To disable the background to obtain a useful alpha mask, you can use the `render_skybox` parameter when adding environment light:
 
 ```python
 scene.add_light(ImageEnvironmentLight(intensity=1.0, color=torch.ones(3, device='cuda'), image=newport_loft().cuda(), render_skybox=False))
@@ -303,7 +317,7 @@ pbr_premult = rp.compose_layers(
 
 The RGB values now represent a more accurate radiance value according to the assumption (that alpha linearly dims radiance).
 However, the value is "pre-multiplied" and makes no sense if combined with a straight alpha,
-so this is not made the default behavior in the ``SurfaceDeferredRenderSession``.
+so this is not made the default behavior in the `SurfaceDeferredRenderSession`.
 To display the image in viewers with the expected colors, you need to convert premultiplied alpha to straight alpha after tone mapping.
 You may also want to saturate the colors (clamping into [0, 1]) to keep it valid in LDR space.
 

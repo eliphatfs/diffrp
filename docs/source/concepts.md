@@ -44,3 +44,5 @@ If you move a triangle by a small distance, colors on its edge can be affected, 
 Visibility gradient is thus referring to techniques to take account of this contribution, and is special to differentiable rendering.
 
 The surface deferred render pipeline in DiffRP implements the Edge Gradient and the anti-aliasing approximation from nvdiffrast as visibility gradient generators.
+
+The path tracing pipeline in DiffRP does not officially support any visibility gradient yet.

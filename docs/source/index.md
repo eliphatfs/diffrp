@@ -3,10 +3,19 @@
 **DiffRP** aims to provide an easy-to-use programming interface for rendering and differentiable rendering pipelines.
 
 ```{figure} assets/spheres-nvdraa-4xssaa.jpg
-:scale: 50 %
+:scale: 40 %
 :alt: Sample Render with DiffRP PBR Rasterization.
 
 The glTF [MetalRoughSpheresNoTextures](https://github.com/KhronosGroup/glTF-Sample-Assets/blob/main/Models/MetalRoughSpheresNoTextures/README.md) scene rendered with DiffRP PBR rasterization.
+```
+
+&NewLine;
+
+```{figure} assets/game-1024spp-denoised.jpg
+:scale: 60 %
+:alt: Sample Render with DiffRP Path Tracing.
+
+The glTF [ABeautifulGame](https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/ABeautifulGame) scene rendered with DiffRP Path Tracing.
 ```
 
 ## Installation
@@ -21,7 +30,15 @@ pip install git+https://github.com/eliphatfs/diffrp
 DiffRP depends on PyTorch (`torch`). The default version `pip` resolves to may not come with the `cuda` version you want. It is recommended to install [PyTorch](https://pytorch.org/get-started/locally/#start-locally) before you install DiffRP so you can choose the version you like.
 ```
 
-If you use rasterization in DiffRP, you need to have the CUDA development kit set up as we use the `nvdiffrast` backend (see also [https://nvlabs.github.io/nvdiffrast/#installation](https://nvlabs.github.io/nvdiffrast/#installation)).
+```{note}
+DiffRP rendering is based on CUDA GPUs. You can develop without one, but a CUDA GPU is required to run the code.
+```
+
+### Other Dependencies
+
+If you use rasterization in DiffRP, you need to have the CUDA development kit set up as we use the `nvdiffrast` backend. See also [https://nvlabs.github.io/nvdiffrast/#installation](https://nvlabs.github.io/nvdiffrast/#installation).
+
+If you want to use hardware ray tracing in DiffRP, you need to install `torchoptix` by `pip install torchoptix`. See also the hardware and driver requirements [https://github.com/eliphatfs/torchoptix?tab=readme-ov-file#requirements](https://github.com/eliphatfs/torchoptix?tab=readme-ov-file#requirements).
 
 If you plan on using plugins in DiffRP (currently when you compute tangents), `gcc` is required in path. This is already fulfilled in most Linux and Mac distributions. For Windows I recommend the Strawberry Perl [(https://strawberryperl.com/)](https://strawberryperl.com/) distribution of `gcc`.
 
