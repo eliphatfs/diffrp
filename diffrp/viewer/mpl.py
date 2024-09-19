@@ -13,7 +13,16 @@ from ..rendering.surface_deferred import SurfaceDeferredRenderSession, SurfaceDe
 
 
 class Viewer:
-    def __init__(self, scene, init_azim: int = 0, init_elev: int = 0, init_origin: list = [0, 0, 0]):
+    """
+    View a scene by constructing the viewer, with the initial camera placed with the specified pose.
+    Requires ``matplotlib`` to be installed.
+    
+    If you need semi-transparency you can tune up max_layers to the overdraw you want to support,
+    but the performance would be lower.
+    
+    Use WASDQE to navigate around the scene, and rotate the view by holding the right mouse button.
+    """
+    def __init__(self, scene, init_azim: int = 0, init_elev: int = 0, init_origin: list = [0, 0, 0], max_layers: int = 1):
         for key in plotlib.rcParams:
             if key.startswith('keymap.'):
                 plotlib.rcParams[key] = []
@@ -24,6 +33,7 @@ class Viewer:
         self.origin = numpy.array(init_origin.copy(), dtype=numpy.float32)
         self.key_state = set()
         self.sensitivity = 1.0
+        self.max_layers = max_layers
         self.rebuild_camera()
         torch.set_grad_enabled(False)
 
