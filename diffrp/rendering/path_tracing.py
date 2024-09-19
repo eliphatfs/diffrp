@@ -22,6 +22,53 @@ from ..utils.light_transport import hammersley, importance_sample_ggx, combine_f
 
 @dataclass
 class PathTracingSessionOptions:
+    """
+    Options for ``PathTracingSession``.
+
+    Args:
+        ray_depth (int):
+            The tracing depth of a ray.
+            Defaults to 3, meaning at maximum 3 bounces of a ray will be computed.
+            At the end of the bounce, ``pbr_ray_last_bounce`` determines the behavior of the ray if you are using the default ``sampler_brdf``.
+            Otherwise, the behavior is defined by your implementation of the sampler.
+        ray_spp (int):
+            Samples per pixel. Defaults to 16.
+        ray_split_size (int):
+            Split the rays traced as a batch.
+            Useful to reduce memory consumption when gradients are not required.
+            Defaults to 8M (8 x 1024 x 1024) rays.
+        deterministic (bool):
+            Try to make the render deterministic.
+            Defaults to True.
+        pbr_ray_step_epsilon (float):
+            To avoid near-intersection at the origin (surface bounce point) of bounce rays, we march ray origins by this amount when generating them in ``sampler_brdf``.
+            You are also recommended to reuse this value for your own sampler for bounce rays.
+            Defaults to 1e-3 (0.001).
+        pbr_ray_last_bounce (str):
+            One of 'void' and 'skybox'.
+            Special to ``sampler_brdf`` in PBR rendering.
+            If set to 'void' (default), a bounce ray ends with zero radiance if it has not reached the sky in ``ray_depth`` bounces.
+            If set to 'skybox', it ends with the sky radiance in the final-bounce direction instead.
+        raycaster_impl (str):
+            | One of 'brute-force', 'naive-pbbvh' and 'torchoptix'.
+              Defaults to 'torchoptix'.
+            | The implementation for scene raycaster.
+            | 'torchoptix' requires ``torchoptix`` to be installed. It uses hardware RT cores for raycasting. This is the fastest implementation.
+            | 'naive-pbbvh' uses a software implementation of a GPU BVH. It is usually 10x to 100x slower than the hardware solution of 'torchoptix'.
+            | 'brute-force' uses a software brute-force ray-triangle tests comparing all pairs of rays and triangles. It is fast if there is little geometry (fewer than ~10 triangles).
+        raycaster_epsilon (float):
+            Only relevant for 'brute-force' and 'naive-pbbvh' raycaster implementations. Discards triangles parallel to the rays beyond this threshold.
+            Defaults to 1e-8.
+        raycaster_builder (str):
+            | One of 'morton' and 'splitaxis'.
+              Defaults to 'splitaxis'.
+            | The BVH builder. Only relevant for 'naive-pbbvh' raycaster implementation.
+            | 'morton' uses a linear BVH sorting triangles based on 30-bit morton code. This has lower query performance but faster building.
+            | 'splitaxis' sorts and splits triangles based on the longest axis at each BVH level.
+        optix_log_level (int):
+            OptiX log level, 0 to 4. Higher means more verbose.
+            Defaults to 3.
+    """
     ray_depth: int = 3
     ray_spp: int = 16
     ray_split_size: int = 8 * 1024 * 1024
@@ -34,10 +81,41 @@ class PathTracingSessionOptions:
     raycaster_impl: Literal['brute-force', 'naive-pbbvh', 'torchoptix'] = 'torchoptix'
     raycaster_epsilon: float = 1e-8
     raycaster_builder: Literal['morton', 'splitaxis'] = 'splitaxis'
+    optix_log_level: Literal[0, 1, 2, 3, 4] = 3
 
 
 @dataclass
 class RayOutputs:
+    """
+    The protocol outputs for path tracing sampler.
+    
+    Args:
+        radiance (torch.Tensor):
+            Shape (R, C) where R is number of rays for the current trace and C is specified channels in ``trace_rays``.
+            Radiance value of the current hit.
+            The output radiance would be the sum of radiance times the attenuation at the radiance.
+        transfer (torch.Tensor):
+            Should be brocastable with radiance.
+            Transfer value of the current hit.
+            The total attenuation value would be the product of transfer values.
+            The attenuation value for the current radiance excludes the current transfer function (starts with all-1s for the first-hit radiance).
+        next_rays_o (torch.Tensor):
+            Shape (R, 3), bounce ray origins.
+            You may want to advance ray origins by a small value (e.g., ``pbr_ray_step_epsilon``) to avoid intersecting the same point at the origin for secondary bounces.
+        next_rays_d (torch.Tensor):
+            Shape (R, 3), bounce ray directions.
+        alpha (torch.Tensor):
+            Shape (R, 1), alpha values.
+            Additively composed and saturated for a hit-mask output.
+            Has no exact physical meaning for different values between 0 and 1 in path tracing,
+            and has no influence on radiance composition.
+        extras (Dict[str, torch.Tensor]):
+            Extra auxiliary outputs indexed by a string name.
+            Collected on the first hit and ignoring .
+            Useful for auxiliary outputs like normals, base colors and AOVs.
+    See also:
+        :py:meth:`diffrp.rendering.path_tracing.PathTracingSession.trace_rays`
+    """
     radiance: torch.Tensor
     transfer: torch.Tensor
     next_rays_o: torch.Tensor
@@ -48,7 +126,7 @@ class RayOutputs:
 
 class PathTracingSession(RenderSessionMixin):
     """
-    Experimental path tracing pipeline. Implementation and interface subject to change.
+    Path tracing render pipeline in DiffRP.
     """
     def __init__(
         self,
@@ -66,6 +144,7 @@ class PathTracingSession(RenderSessionMixin):
         vao = self.vertex_array_object()
         cfg = {'epsilon': self.options.raycaster_epsilon}
         if self.options.raycaster_impl == 'torchoptix':
+            cfg['optix_log_level'] = self.options.optix_log_level
             return TorchOptiX(vao.world_pos, vao.tris, cfg)
         elif self.options.raycaster_impl == 'naive-pbbvh':
             if len(vao.tris) <= 3:
@@ -168,7 +247,15 @@ class PathTracingSession(RenderSessionMixin):
             return black_tex().rgb
         return env_light
 
-    def sampler_brdf(self, rays_o, rays_d, t, i, d: int):
+    def sampler_brdf(self, rays_o, rays_d, t, i, d: int) -> RayOutputs:
+        """
+        A *sampler* for ``trace_rays`` implementing the principled PBR BRDF.
+        
+        See :py:class:`RayOutputs` and :py:meth:`~diffrp.rendering.path_tracing.PathTracingSession.pbr` for semantics of outputs.
+        
+        See also:
+            :py:meth:`~diffrp.rendering.path_tracing.PathTracingSession.trace_rays` for meaning of arguments.
+        """
         far = self.camera_far()
         mats = self.layer_material_rays(rays_o, rays_d, t, i)
         always_sky = self.options.ray_depth - 1 == d and self.options.pbr_ray_last_bounce == 'skybox'
@@ -192,6 +279,34 @@ class PathTracingSession(RenderSessionMixin):
         )
 
     def trace_rays(self, sampler: Callable[[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, int], RayOutputs], radiance_channels: int = 3):
+        """
+        Trace the ray paths.
+        
+        Note that missed rays are not automatically excluded in further traces.
+        You may need to specify a transfer value of zeros to avoid light leakage.
+        
+        Args:
+            sampler (Callable):
+                | Sampler function to produce radiance, alpha and extra values.
+                  Take five arguments ``(rays_o, rays_d, t, i, d)`` and outputs :py:class:`RayOutputs`.
+                | ``rays_o`` and ``rays_d`` are of shape (R, 3), and defines current tracing rays.
+                | ``t`` of shape (R) is the distance from the ray origin to the hit point. It is guaranteed to be ``camera_far()`` if not hit.
+                | ``i`` of shape (R) is the primitive index of the hit point, starting from 0. The value is undefined for non-hit rays.
+                | Usually you do not need to handle the semantics of ``i`` yourselves, but
+                  use ``layer_material_rays`` and ``_gbuffer_collect_layer_impl_stencil_masked`` to collect information about the scene.
+                | ``d`` is the current ray depth. ``0`` is the first rays emitting from the camera.
+                | Returns :py:class:`RayOutputs`. See the documentation for :py:class:`RayOutputs` for meanings of components.
+            radiance_channels (int):
+                Number of channels for radiance outputs in sampler.
+                Defaults to 3.
+
+        Returns:
+            Tuple of (radiance, alpha, extras):
+                ``radiance`` is a tensor of shape (H, W, ``radiance_channels``).
+                ``alpha`` is a tensor of shape (H, W, 1).
+                ``extras`` is a dict from names to tensors of auxiliary attributes,
+                all of which has shape (H, W, C) where C is the number of channels output by the ``sampler``.
+        """
         device = torch.device('cuda')
         raycaster = self.raycaster()
         far = self.camera_far()
@@ -237,4 +352,16 @@ class PathTracingSession(RenderSessionMixin):
         return torch.flipud(radiance), torch.flipud(alpha), extras_v
 
     def pbr(self):
+        """
+        Path-traced PBR rendering.
+        
+        Returns:
+            Tuple of (radiance, alpha, extras):
+                | ``radiance`` is a linear HDR RGB tensor of shape (H, W, 3).
+                | ``alpha`` is a mask tensor of shape (H, W, 1).
+                | ``extras`` is a dict from names to tensors of auxiliary attributes.
+                  The included attributes are: ``albedo``, ``emission``, ``world_normal`` and ``world_position``.
+                  ``world_normal`` are raw vectors in range of [-1, 1] and are not mapped to false colors.
+                  All of them have shape (H, W, 3).
+        """
         return self.trace_rays(self.sampler_brdf)

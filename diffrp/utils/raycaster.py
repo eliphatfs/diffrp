@@ -266,6 +266,8 @@ class TorchOptiX(Raycaster):
         self.handle = None
         import torchoptix
         self.optix = torchoptix
+        optix_log_level = config.get('optix_log_level', 3)
+        self.optix.set_log_level(optix_log_level)
         self.verts = verts.contiguous()
         self.tris = tris.contiguous()
         self.handle = self.optix.build(
