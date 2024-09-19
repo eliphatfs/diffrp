@@ -794,7 +794,7 @@ class SurfaceDeferredRenderSession(RenderSessionMixin):
         clip_space = self.clip_space()
         tris = self.vertex_array_object().tris
 
-        frag = polyfill_interpolate(clip_space, rast, tris, 1.0)
+        frag = polyfill_interpolate(clip_space, rast, tris[rast.w.squeeze(-1).long() - 1], 1.0)
         frag_xy = frag.xy / frag.w
 
         flat_tris_xy = (clip_space.xy / clip_space.w)[tris]  # F, 3, 2
