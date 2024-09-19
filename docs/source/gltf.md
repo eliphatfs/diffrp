@@ -240,6 +240,99 @@ pbr = ssaa_downscale(pbr, 2)
 
 Note that anti-aliasing operations do not currently support transparency.
 
+
+### 9+. Transparent Film
+
+To disable the background to obtain a useful alpha mask, you can use the ``render_skybox`` parameter when adding environment light:
+
+```python
+scene.add_light(ImageEnvironmentLight(intensity=1.0, color=torch.ones(3, device='cuda'), image=newport_loft().cuda(), render_skybox=False))
+```
+
+During tone mapping, you need to keep the alpha channel unchanged.
+
+```python
+from diffrp.utils import agx_base_contrast, float4
+pbr = rp.pbr()
+pbr = float4(agx_base_contrast(pbr.rgb), pbr.a)
+```
+
+After that, you may also compose with a white background if you like:
+
+```python
+from diffrp.utils import background_alpha_compose
+pbr = background_alpha_compose(1, pbr)  # input pbr 4 channels rgba, output 3 channels rgb
+```
+
+
+### 10. Handling Semi-Transparency (Optional)
+
+Theoretically, alpha blending is not a physical behavior. It is an inaccurate approximation of transmission and refraction.
+Thus, it is usually counter-intuitive and tricky to handle semi-transparency in PBR rasterization pipelines.
+
+Firstly, you need to disable opaque geometry only mode
+(this is made the default as rendering semi-transparency is much more compute and memory-intensive, and is rarely used for differentiable rasterization):
+
+```python
+rp = SurfaceDeferredRenderSession(scene, camera, opaque_only=False)
+```
+
+This makes the render pipeline support semi-transparency, and it works if you have a environment background image.
+
+For transparent films, you may also go with the simple handling described in section 9+, but we may do a little bit better.
+A more delicate handling of semi-transparency in terms of alpha values will require deeper analysis into the pipeline.
+
+For PBR rendering, HDR radiance values are composed, instead of LDR colors.
+This is the tricky part as alpha-blending itself makes no physical sense for HDR radiance values.
+
+We can however assume that alpha linearly dims the radiance values (note that this assumption makes some sense but is not physically accurate),
+which makes the blending consistent with pre-multiplied alpha in traditional alpha-blending.
+Pre-multiplied means that the RGB values are multiplied with alpha when stored, which is already the final color contribution.
+This is in contrast to straight alpha which means RGB values are the raw colors, which is usually what happens in PNG files and other storage formats.
+By default, DiffRP also treats alpha as straight alpha.
+
+It is also easy to do pre-multiplied alpha blending with DiffRP instead.
+We just need to start with zeros in the color buffer when composing instead of starting with values in the last buffer.
+
+```python
+pbr_premult = rp.compose_layers(
+    rp.pbr_layered() + [torch.zeros([1080, 1920, 3], device='cuda')],
+    rp.alpha_layered() + [torch.zeros([1080, 1920, 1], device='cuda')]
+)
+```
+
+The RGB values now represent a more accurate radiance value according to the assumption (that alpha linearly dims radiance).
+However, the value is "pre-multiplied" and makes no sense if combined with a straight alpha,
+so this is not made the default behavior in the ``SurfaceDeferredRenderSession``.
+To display the image in viewers with the expected colors, you need to convert premultiplied alpha to straight alpha after tone mapping.
+You may also want to saturate the colors (clamping into [0, 1]) to keep it valid in LDR space.
+
+```python
+from diffrp.utils import saturate, ssaa_downscale
+pbr = ssaa_downscale(pbr_premult, 2)
+pbr = saturate(float4(agx_base_contrast(pbr.rgb) / torch.clamp_min(pbr.a, 0.0001), pbr.a))
+```
+
+However, the colors will be slightly off if the colors are actually clamped (larger than 1 before clamping).
+This is a limitation of traditional LDR images with straight alpha.
+
+You can also convert the premultiplied alpha to straight alpha before tone mapping.
+There is an approximation in the tone mapper this way as the input is no longer a physical radiance value for semi-transparent regions,
+but you won't introduce errors when clamping the outputs.
+
+```python
+pbr = float4(agx_base_contrast(pbr.rgb / torch.clamp_min(pbr.a, 0.0001)), pbr.a)
+```
+
+Note that in both ways, you should handle anti-aliasing in premultiplied space.
+
+Also, to put it again, alpha blending is a non-physical approximation to the transmission and refraction of light.
+Thus, there is no "correct way" to handle alpha (other than extreme values of 0 and 1) together with a PBR pipeline.
+
+All of the above ways make different assumptions for semi-transparency, and all of them are correct if all alpha values are either 0 or 1,
+including the simple method described in Section 9+.
+
+
 ## Complete Example
 
 ![Example output](assets/spheres-output.jpg)
