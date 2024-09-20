@@ -4,6 +4,8 @@ Short for *GL Transmission Format*, [glTF](https://github.com/KhronosGroup/glTF)
 
 In this section, we will render the [MetalRoughSpheresNoTextures](https://github.com/KhronosGroup/glTF-Sample-Assets/blob/main/Models/MetalRoughSpheresNoTextures/README.md) scene from glTF sample asset library to walk through basic rendering features of DiffRP. You can download the scene from the link above or as a zip file {download}`here<assets/spheres.zip>`.
 
+We will use the surface deferred (rasterization) rendering pipeline for this tutorial.
+
 ## Steps
 
 ### 1. Loading the Scene

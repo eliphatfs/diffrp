@@ -107,6 +107,8 @@ gltf
 concepts
 pipeline_surface_deferred
 writing_a_material
+ptpbr
+pipeline_comparison
 ```
 
 ## API Reference
@@ -118,6 +120,8 @@ generated/diffrp
 
 ## Update Notes
 
++ **0.2.1**: Add metadata functionality.
++ **0.2.0**: Implemented path tracing pipeline.
 + **0.1.5**: Fix normal and tangent attributes in static batching, refactoring to extract logic shared across rendering pipelines.
 + **0.1.4**: Faster GLTF loading, static batching support, minor GPU memory optimizations.
 + **0.1.3**: Fix instanced GLTF material loading (GPU memory explosion issue).
