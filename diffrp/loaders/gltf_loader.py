@@ -100,6 +100,10 @@ def load_gltf_scene(path: Union[str, BinaryIO], compute_tangents=False) -> Scene
     """
     Load a glb file as a DiffRP Scene.
     
+    Supported metadata:
+        ``name`` for each mesh object (may be ``None``);
+        ``camera`` (type PerspectiveCamera) if exists.
+    
     Args:
         path (str | BinaryIO): path to a ``.glb``/``.gltf`` file, or opened ``.glb`` file in binary mode.
         compute_tangents (bool):
@@ -128,9 +132,10 @@ def load_gltf_scene(path: Union[str, BinaryIO], compute_tangents=False) -> Scene
             float(scene.camera.z_far)
         )
         camera.t = scene.camera_transform
-        drp_scene.camera = camera
+        drp_scene.metadata['camera'] = camera
     meshes: List[trimesh.Trimesh] = []
     transforms: List[torch.Tensor] = []
+    names: List[str] = []
     discarded = 0
     for node_name in scene.graph.nodes_geometry:
         transform, geometry_name = scene.graph[node_name]
@@ -139,9 +144,10 @@ def load_gltf_scene(path: Union[str, BinaryIO], compute_tangents=False) -> Scene
         if isinstance(current, trimesh.Trimesh):
             meshes.append(current)
             transforms.append(gpu_f32(transform))
+            names.append(geometry_name)
     logging.info("Loaded scene %s with %d submeshes and %d discarded curve/pcd geometry", path, len(meshes), discarded)
     material_cache = {}
-    for transform, mesh in zip(transforms, meshes):
+    for transform, mesh, name in zip(transforms, meshes, names):
         verts = gpu_f32(mesh.vertices)
         uv, color, mat = to_gltf_material(verts, mesh.visual, material_cache)
         # TODO: load vertex tangents if existing
@@ -150,7 +156,8 @@ def load_gltf_scene(path: Union[str, BinaryIO], compute_tangents=False) -> Scene
                 mat, verts,
                 gpu_i32(mesh.faces),
                 gpu_f32(mesh.vertex_normals),
-                transform, color, uv
+                transform, color, uv,
+                metadata=dict(name=name)
             ))
         else:
             flat_idx = mesh.faces.reshape(-1)
@@ -165,7 +172,8 @@ def load_gltf_scene(path: Union[str, BinaryIO], compute_tangents=False) -> Scene
                 mat, verts[flat_idx],
                 gpu_i32(numpy.arange(len(flat_idx)).reshape(-1, 3)),
                 gpu_f32(normals),
-                transform, color[flat_idx], uv[flat_idx]
+                transform, color[flat_idx], uv[flat_idx],
+                metadata=dict(name=name)
             ))
     if compute_tangents:
         for mesh_obj in drp_scene.objects:

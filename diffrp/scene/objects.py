@@ -1,9 +1,9 @@
 import torch
 from dataclasses import dataclass
 from typing_extensions import Literal
-from typing import Optional, Dict, Union
+from typing import Optional, Dict, Union, Any
 from ..materials.base_material import SurfaceMaterial
-from ..utils.shader_ops import zeros_like_vec, ones_like_vec, gpu_f32
+from ..utils.shader_ops import zeros_like_vec, ones_like_vec
 from ..utils.geometry import make_face_soup, compute_face_normals, compute_vertex_normals
 
 
@@ -45,6 +45,8 @@ class MeshObject:
         custom_attrs (Dict[str, torch.Tensor]):
             Arbitrary attributes you want to bind to your vertices.
             Tensor of shape (V, \\*) for each attribute, dtype float32.
+        metadata (Dict[str, Any]):
+            Arbitrary meta data to tag the object. Not used for rendering.
     """
     # material
     material: SurfaceMaterial
@@ -62,6 +64,8 @@ class MeshObject:
     uv: Optional[torch.Tensor] = None
     tangents: Optional[torch.Tensor] = None
     custom_attrs: Optional[Dict[str, torch.Tensor]] = None
+    
+    metadata: Optional[Dict[str, Any]] = None
 
     def preprocess(self):
         if self.M is None:
@@ -74,6 +78,8 @@ class MeshObject:
             self.tangents = zeros_like_vec(self.verts, 4)
         if self.custom_attrs is None:
             self.custom_attrs = {}
+        if self.metadata is None:
+            self.metadata = {}
         if isinstance(self.normals, str):
             if self.normals == 'smooth':
                 self.normals = compute_vertex_normals(self.verts, self.tris)

@@ -11,10 +11,16 @@ class Scene:
     """
     Represents a scene in DiffRP.
     ``add_*`` methods return the scene itself for chaining calls.
+    
+    Attributes:
+        lights: List of light sources in the scene.
+        objects: List of objects in the scene. Currently supporting MeshObject only.
+        metadata: Dict of arbitrary loader-specific or user-defined metadata.
     """
     def __init__(self) -> None:
         self.lights: List[Light] = []
         self.objects: List[MeshObject] = []
+        self.metadata = {}
 
     def add_light(self, light: Light) -> Self:
         self.lights.append(light)
