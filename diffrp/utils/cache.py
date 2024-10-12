@@ -18,7 +18,6 @@ def cached_func(self: ICached, key: Hashable, func: FunctionType):
     return self._cache[key]
 
 
-@staticmethod
 def cached(func: FuncType) -> FuncType:
 
     @functools.wraps(func)
@@ -28,7 +27,6 @@ def cached(func: FuncType) -> FuncType:
     return wrapped
 
 
-@staticmethod
 def key_cached(func: FuncType) -> FuncType:
 
     @functools.wraps(func)
@@ -38,7 +36,6 @@ def key_cached(func: FuncType) -> FuncType:
     return wrapped
 
 
-@staticmethod
 def singleton_cached(func: FuncType) -> FuncType:
 
     @functools.wraps(func)

@@ -120,6 +120,7 @@ generated/diffrp
 
 ## Update Notes
 
++ **0.2.2**: Fixed backward compatibility due to `staticmethod`.
 + **0.2.1**: Add metadata functionality.
 + **0.2.0**: Implemented path tracing pipeline.
 + **0.1.5**: Fix normal and tangent attributes in static batching, refactoring to extract logic shared across rendering pipelines.
