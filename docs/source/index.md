@@ -113,6 +113,10 @@ pipeline_comparison
 
 ## API Reference
 
+```{note}
+All documented public APIs from submodules are available at the `diffrp.*` level except for resources and extension plugins.
+```
+
 ```{toctree}
 :maxdepth: 3
 generated/diffrp
