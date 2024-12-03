@@ -1,10 +1,11 @@
 import torch
 from dataclasses import dataclass
 from typing_extensions import Literal
-from typing import Optional, Dict, Union, Any
-from ..materials.base_material import SurfaceMaterial
+from typing import Optional, Dict, Union, Any, TYPE_CHECKING
 from ..utils.shader_ops import zeros_like_vec, ones_like_vec
 from ..utils.geometry import make_face_soup, compute_face_normals, compute_vertex_normals
+if TYPE_CHECKING:
+    from ..materials.base_material import SurfaceMaterial
 
 
 @dataclass
@@ -49,7 +50,7 @@ class MeshObject:
             Arbitrary meta data to tag the object. Not used for rendering.
     """
     # material
-    material: SurfaceMaterial
+    material: 'SurfaceMaterial'
 
     # geometry
     verts: torch.Tensor
