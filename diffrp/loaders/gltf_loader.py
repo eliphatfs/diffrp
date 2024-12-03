@@ -9,7 +9,6 @@ from trimesh.visual import ColorVisuals, TextureVisuals
 
 from ..utils import colors
 from ..utils.shader_ops import *
-from ..plugins import mikktspace
 from ..scene import Scene, MeshObject
 from ..rendering.camera import PerspectiveCamera
 from ..materials.gltf_material import GLTFMaterial, GLTFSampler
@@ -110,6 +109,7 @@ def load_gltf_scene(path: Union[str, BinaryIO], compute_tangents=False) -> Scene
             If set, tangents will be computed according to the *MikkTSpace* algorithm.
             Execution of the algorithm requires ``gcc`` in the path.
             Defaults to ``False``.
+            Note that computing tangents are not thread-safe.
         
     Returns:
         The loaded scene.
@@ -176,6 +176,7 @@ def load_gltf_scene(path: Union[str, BinaryIO], compute_tangents=False) -> Scene
                 metadata=dict(name=name)
             ))
     if compute_tangents:
+        from ..plugins import mikktspace
         for mesh_obj in drp_scene.objects:
             mesh_obj.tangents = mikktspace.execute(mesh_obj.verts, mesh_obj.normals, mesh_obj.uv)
     return drp_scene
