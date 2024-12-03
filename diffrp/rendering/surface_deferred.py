@@ -1,5 +1,6 @@
 import torch
 import warnings
+import threading
 import nvdiffrast.torch as dr
 from dataclasses import dataclass
 from typing_extensions import Literal
@@ -19,7 +20,7 @@ from .interpolator import FullScreenInterpolator, MaskedSparseInterpolator, poly
 from ..utils.light_transport import prefilter_env_map, pre_integral_env_brdf, irradiance_integral_env_map, fresnel_schlick_smoothness
 
 
-ctx_cache = {}
+tls = threading.local()
 
 
 @dataclass
@@ -178,8 +179,7 @@ class SurfaceDeferredRenderSession(RenderSessionMixin):
     or changing attributes on the object.
     Initialization of this class is made light-weight and fast.
 
-    It is not thread-safe to run more than one sessions on the same GPU by default.
-    If you need to do this, see the ``ctx`` parameter.
+    It is thread-safe to run more than one sessions on the same GPU by default.
 
     DiffRP operations do not support multiple GPUs on a single process.
     You will need to access the GPUs with a distributed paradigm,
@@ -196,11 +196,9 @@ class SurfaceDeferredRenderSession(RenderSessionMixin):
         options (SurfaceDeferredRenderSessionOptions): Options for the session.
             See :py:class:`SurfaceDeferredRenderSessionOptions` for details.
         ctx (RasterizeContext): The backend context to be used.
-            By default, each GPU has its own, shared context.
-            It is not thread-safe to run multiple sessions on one context simultaneously.
-            If you use render sessions multi-threaded, you need to create a context for each thread.
+            By default, each GPU and each thread has its own, shared context.
             This render pipeline uses ``nvdiffrast`` as the backend.
-            You can pass your own ``RasterizeCudaContext`` if needed.
+            You can pass your own ``RasterizeCudaContext`` or ``RasterizeGLContext`` if needed.
     """
     def __init__(
         self,
@@ -221,9 +219,11 @@ class SurfaceDeferredRenderSession(RenderSessionMixin):
             self.ctx = ctx
         else:
             device = torch.cuda.current_device()
-            if device not in ctx_cache:
-                ctx_cache[device] = dr.RasterizeCudaContext()
-            self.ctx = ctx_cache[device]
+            if not hasattr(tls, 'ctx_cache'):
+                tls.ctx_cache = {}
+            if device not in tls.ctx_cache:
+                tls.ctx_cache[device] = dr.RasterizeCudaContext()
+            self.ctx = tls.ctx_cache[device]
         self.options = options
     
     @cached
