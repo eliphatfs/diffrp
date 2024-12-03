@@ -16,3 +16,10 @@ def to_pil(rgb_or_rgba: torch.Tensor):
     """
     img = rst.torch_to_numpy((saturate(rgb_or_rgba.float()) * 255).byte().contiguous())
     return Image.fromarray(img)
+
+
+def torch_load_no_warning(fn: str):
+    if torch.__version__ >= '2.4':
+        return torch.load(fn, weights_only=True)
+    else:
+        return torch.load(fn)

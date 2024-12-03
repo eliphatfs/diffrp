@@ -3,6 +3,7 @@ from .cache import key_cached
 from .shader_ops import sample3d
 from ..resources import get_resource_path
 from .colors import linear_to_alexa_logc_ei1000, linear_to_srgb
+from .exchange import torch_load_no_warning
 
 
 class AgxLutLoader:
@@ -11,7 +12,7 @@ class AgxLutLoader:
     """
     @key_cached
     def load(self, variant: str) -> torch.Tensor:
-        return torch.fliplr(torch.load(get_resource_path("luts/agx-%s.pt" % variant)).cuda()).contiguous()
+        return torch.fliplr(torch_load_no_warning(get_resource_path("luts/agx-%s.pt" % variant)).cuda()).contiguous()
 
 
 agx_lut_loader = AgxLutLoader()

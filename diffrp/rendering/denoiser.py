@@ -15,7 +15,7 @@ from ..utils import *
 
 def get_denoiser():
     net = UNet(9, 3)
-    net.load_state_dict(torch.load(get_resource_path("denoisers/rt_hdr_alb_nrm.pt")))
+    net.load_state_dict(torch_load_no_warning(get_resource_path("denoisers/rt_hdr_alb_nrm.pt")))
     if torch.cuda.is_available():
         net = net.cuda()
     return torch.jit.script(net.float())
