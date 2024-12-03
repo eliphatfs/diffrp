@@ -120,6 +120,7 @@ generated/diffrp
 
 ## Update Notes
 
++ **0.2.3**: Make submodule contents available at top level. Make context sharing mechanism thread-safe by default. Fix `torch.load` warnings in newer torch versions.
 + **0.2.2**: Fixed backward compatibility due to `staticmethod`.
 + **0.2.1**: Add metadata functionality.
 + **0.2.0**: Implemented path tracing pipeline.
