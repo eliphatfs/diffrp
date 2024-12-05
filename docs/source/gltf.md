@@ -13,9 +13,10 @@ We will use the surface deferred (rasterization) rendering pipeline for this tut
 DiffRP includes an easy method to load a GLB file into a scene.
 
 ```python
-from diffrp.loaders.gltf_loader import load_gltf_scene
+import diffrp
+from diffrp.utils import *
 
-scene = load_gltf_scene("spheres.glb")
+scene = diffrp.load_gltf_scene("spheres.glb")
 ```
 
 If you want to support normal maps, you will need to compute tangents with `compute_tangents=True`. This would require `gcc` to be installed,
@@ -23,7 +24,7 @@ which is usually already fulfilled in most Linux and Mac distributions.
 For Windows the Strawberry Perl [(https://strawberryperl.com/)](https://strawberryperl.com/) distribution of `gcc` would be recommended.
 
 ```python
-scene = load_gltf_scene("spheres.glb", compute_tangents=True)
+scene = diffrp.load_gltf_scene("spheres.glb", compute_tangents=True)
 ```
 
 Optionally, if you plan to render many frames with this scene, you can compute static batching to batch sub-objects with the same material into one to make future renders more efficient.
@@ -37,9 +38,7 @@ scene = scene.static_batching()
 We can create an orbital camera within DiffRP to look at the center of the scene. The scene is small so we place the camera quite close to the spheres.
 
 ```python
-from diffrp.rendering.camera import PerspectiveCamera
-
-camera = PerspectiveCamera.from_orbit(
+camera = diffrp.PerspectiveCamera.from_orbit(
     h=1080, w=1920,  # resolution
     radius=0.02, azim=0, elev=0,  # orbit camera position, azim/elev in degrees
     origin=[0.003, 0.003, 0],  # orbit camera focus point
@@ -56,9 +55,7 @@ Now let's create the render session that is the core for rendering in DiffRP.
 Rendering sessions are designed to be short-lived in DiffRP. Each frame that has a different scene or camera setup should have its own new render session.
 
 ```python
-from diffrp.rendering.surface_deferred import SurfaceDeferredRenderSession
-
-rp = SurfaceDeferredRenderSession(scene, camera)
+rp = diffrp.SurfaceDeferredRenderSession(scene, camera)
 ```
 
 ### 4. Rendering Normals and BRDF Parameters
@@ -94,8 +91,6 @@ Single channel dims are kept for broadcastability.
 Note however the values are undefined in transparent regions. You may would like to composite with a background color if you need it:
 
 ```python
-from diffrp.utils import background_alpha_compose
-
 background_alpha_compose([0.5, 0.5, 0.5], nor)
 background_alpha_compose(0.5, nor)
 ```
@@ -107,8 +102,6 @@ Both of these commands would place a gray background for the normal map, which r
 If you need to save or export the renders, DiffRP provides a utility method `to_pil` to convert the results from GPU Tensors into PIL Images. Only LDR RGB/RGBA images are supported.
 
 ```python
-from diffrp.utils import to_pil
-
 to_pil(nor).show()
 to_pil(mso).show()
 ```
@@ -141,7 +134,6 @@ to_pil(albedo_srgb).show()
 You can also call the lower level color space utility yourself:
 
 ```python
-from diffrp.utils import linear_to_srgb, float4
 float4(linear_to_srgb(albedo.rgb), albedo.a)
 ```
 
@@ -189,10 +181,9 @@ Let's add an DiffRP built-in HDRI as the ambient lighting into our scene:
 
 ```python
 import torch
-from diffrp.scene import ImageEnvironmentLight
 from diffrp.resources.hdris import newport_loft
 
-scene.add_light(ImageEnvironmentLight(intensity=1.0, color=torch.ones(3, device='cuda'), image=newport_loft().cuda()))
+scene.add_light(diffrp.ImageEnvironmentLight(intensity=1.0, color=torch.ones(3, device='cuda'), image=newport_loft().cuda()))
 ```
 
 A tint color can be specified in the `color` parameter as you like. Note that the tensors needs to be on GPUs.
@@ -206,7 +197,7 @@ If you load it from a PNG/JPG file, you usually need to convert it from sRGB to 
 Now recreate the render session as the scene has been changed:
 
 ```python
-rp = SurfaceDeferredRenderSession(scene, camera)
+rp = diffrp.SurfaceDeferredRenderSession(scene, camera)
 ```
 
 Now we can issue the rendering call just as simple as before:
@@ -228,8 +219,7 @@ The previous image seems weirdly dark. It is due to we are in HDR linear space, 
 The procedure of converting an HDR image into LDR is called tone-mapping. DiffRP efficiently implements the state-of-the-art [AgX](https://github.com/sobotka/AgX) tone-mapper in a differentiable manner.
 
 ```python
-from diffrp.utils import agx_base_contrast
-pbr = agx_base_contrast(pbr.rgb)
+pbr = diffrp.agx_base_contrast(pbr.rgb)
 ```
 
 The result would be a valid RGB image in sRGB space.
@@ -250,7 +240,6 @@ The order of anti-aliasing and tone-mapping leaves for your choice.
 If you aim for higher rendering quality, you can also use a simple SSAA technique. That is, specify a higher resolution when rendering, and downscale at the end.
 
 ```python
-from diffrp.utils import ssaa_downscale
 pbr = ssaa_downscale(pbr, 2)
 ```
 
@@ -262,13 +251,12 @@ Note that anti-aliasing operations do not currently support transparency.
 To disable the background to obtain a useful alpha mask, you can use the `render_skybox` parameter when adding environment light:
 
 ```python
-scene.add_light(ImageEnvironmentLight(intensity=1.0, color=torch.ones(3, device='cuda'), image=newport_loft().cuda(), render_skybox=False))
+scene.add_light(diffrp.ImageEnvironmentLight(intensity=1.0, color=torch.ones(3, device='cuda'), image=newport_loft().cuda(), render_skybox=False))
 ```
 
 During tone mapping, you need to keep the alpha channel unchanged.
 
 ```python
-from diffrp.utils import agx_base_contrast, float4
 pbr = rp.pbr()
 pbr = float4(agx_base_contrast(pbr.rgb), pbr.a)
 ```
@@ -276,8 +264,7 @@ pbr = float4(agx_base_contrast(pbr.rgb), pbr.a)
 After that, you may also compose with a white background if you like:
 
 ```python
-from diffrp.utils import background_alpha_compose
-pbr = background_alpha_compose(1, pbr)  # input pbr 4 channels rgba, output 3 channels rgb
+pbr = diffrp.background_alpha_compose(1, pbr)  # input pbr 4 channels rgba, output 3 channels rgb
 ```
 
 
@@ -290,7 +277,7 @@ Firstly, you need to disable opaque geometry only mode
 (this is made the default as rendering semi-transparency is much more compute and memory-intensive, and is rarely used for differentiable rasterization):
 
 ```python
-rp = SurfaceDeferredRenderSession(scene, camera, opaque_only=False)
+rp = diffrp.SurfaceDeferredRenderSession(scene, camera, opaque_only=False)
 ```
 
 This makes the render pipeline support semi-transparency, and it works if you have a environment background image.
@@ -324,7 +311,6 @@ To display the image in viewers with the expected colors, you need to convert pr
 You may also want to saturate the colors (clamping into [0, 1]) to keep it valid in LDR space.
 
 ```python
-from diffrp.utils import saturate, ssaa_downscale
 pbr = ssaa_downscale(pbr_premult, 2)
 pbr = saturate(float4(agx_base_contrast(pbr.rgb) / torch.clamp_min(pbr.a, 0.0001), pbr.a))
 ```
@@ -356,27 +342,24 @@ including the simple method described in Section 9+.
 ```python
 import torch
 from diffrp.resources import hdris
-from diffrp.scene import ImageEnvironmentLight
-from diffrp.utils import to_pil, agx_base_contrast
-from diffrp.rendering.camera import PerspectiveCamera
-from diffrp.loaders.gltf_loader import load_gltf_scene
-from diffrp.rendering.surface_deferred import SurfaceDeferredRenderSession
+import diffrp
+from diffrp.utils import *
 
 
-scene = load_gltf_scene("spheres.glb")
-scene.add_light(ImageEnvironmentLight(
+scene = diffrp.load_gltf_scene("spheres.glb")
+scene.add_light(diffrp.ImageEnvironmentLight(
     intensity=1.0, color=torch.ones(3, device='cuda'),
     image=hdris.newport_loft().cuda()
 ))
 
-camera = PerspectiveCamera.from_orbit(
+camera = diffrp.PerspectiveCamera.from_orbit(
     h=1080, w=1920,  # resolution
     radius=0.02, azim=0, elev=0,  # orbit camera position, azim/elev in degrees
     origin=[0.003, 0.003, 0],  # orbit camera focus point
     fov=30, near=0.005, far=10.0  # intrinsics
 )
 
-rp = SurfaceDeferredRenderSession(scene, camera)
+rp = diffrp.SurfaceDeferredRenderSession(scene, camera)
 pbr = rp.pbr()
 
 pbr_aa = rp.nvdr_antialias(pbr.rgb)

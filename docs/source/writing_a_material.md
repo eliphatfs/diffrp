@@ -15,35 +15,33 @@ Note that within DiffRP you can use the GLSL-like attributes to access slices in
 
 ```python
 import torch
-from diffrp.utils import float3
-from diffrp.materials import SurfaceMaterial, SurfaceInput, SurfaceOutputStandard, SurfaceUniform
+import diffrp
+from diffrp.utils import *
 
 
-class ProceduralMaterial(SurfaceMaterial):
+class ProceduralMaterial(diffrp.SurfaceMaterial):
 
-    def shade(self, su: SurfaceUniform, si: SurfaceInput) -> SurfaceOutputStandard:
+    def shade(self, su: diffrp.SurfaceUniform, si: diffrp.SurfaceInput) -> diffrp.SurfaceOutputStandard:
         p = si.world_pos
         r = torch.exp(torch.sin(p.x) + torch.cos(p.y) - 2)
         g = torch.exp(torch.sin(p.y) + torch.cos(p.z) - 2)
         b = torch.exp(torch.sin(p.z) + torch.cos(p.x) - 2)
         v = torch.where(p.z > 0.5, 0.5 * torch.exp(-p.x * p.x * p.y * p.y * 1000), 0)
         albedo = float3(r, g, b) + v
-        return SurfaceOutputStandard(albedo=albedo)
+        return diffrp.SurfaceOutputStandard(albedo=albedo)
 ```
 
 We can use the quick-start example for visualization:
 
 ```python
+import diffrp
 import trimesh.creation
-from diffrp.scene import Scene, MeshObject
-from diffrp.utils import gpu_f32, gpu_i32, to_pil
-from diffrp.rendering.camera import PerspectiveCamera
-from diffrp.rendering.surface_deferred import SurfaceDeferredRenderSession
+from diffrp.utils import *
 
 mesh = trimesh.creation.icosphere(radius=0.8)
-scene = Scene().add_mesh_object(MeshObject(ProceduralMaterial(), gpu_f32(mesh.vertices), gpu_i32(mesh.faces)))
-camera = PerspectiveCamera(h=2048, w=2048)
-rp = SurfaceDeferredRenderSession(scene, camera)
+scene = diffrp.Scene().add_mesh_object(diffrp.MeshObject(ProceduralMaterial(), gpu_f32(mesh.vertices), gpu_i32(mesh.faces)))
+camera = diffrp.PerspectiveCamera(h=2048, w=2048)
+rp = diffrp.SurfaceDeferredRenderSession(scene, camera)
 to_pil(rp.albedo_srgb()).save("procedural-albedo.png")
 ```
 
@@ -61,7 +59,7 @@ As the input and outputs are expect to be a batch of features, and they are alre
 In this `NeuralMaterial`, we create a neural network and evaluate it for albedo output.
 
 ```python
-class NeuralMaterial(SurfaceMaterial):
+class NeuralMaterial(diffrp.SurfaceMaterial):
     def __init__(self) -> None:
         super().__init__()
         self.net = torch.nn.Sequential(
@@ -73,8 +71,8 @@ class NeuralMaterial(SurfaceMaterial):
             torch.nn.Sigmoid()
         ).cuda()
 
-    def shade(self, su: SurfaceUniform, si: SurfaceInput) -> SurfaceOutputStandard:
-        return SurfaceOutputStandard(albedo=self.net(si.world_normal))
+    def shade(self, su: diffrp.SurfaceUniform, si: diffrp.SurfaceInput) -> diffrp.SurfaceOutputStandard:
+        return diffrp.SurfaceOutputStandard(albedo=self.net(si.world_normal))
 ```
 
 We use the same testing code:
@@ -82,9 +80,9 @@ We use the same testing code:
 ```python
 mesh = trimesh.creation.icosphere(radius=0.8)
 material = NeuralMaterial()
-scene = Scene().add_mesh_object(MeshObject(material, gpu_f32(mesh.vertices), gpu_i32(mesh.faces)))
-camera = PerspectiveCamera(h=512, w=512)
-rp = SurfaceDeferredRenderSession(scene, camera)
+scene = diffrp.Scene().add_mesh_object(diffrp.MeshObject(material, gpu_f32(mesh.vertices), gpu_i32(mesh.faces)))
+camera = diffrp.PerspectiveCamera(h=512, w=512)
+rp = diffrp.SurfaceDeferredRenderSession(scene, camera)
 to_pil(rp.albedo_srgb()).save("neural-albedo.png")
 ```
 

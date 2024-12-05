@@ -51,12 +51,9 @@ In this section, we will get started to render a simple procedural mesh.
 First, let's import what we would need:
 
 ```python
+import diffrp
 import trimesh.creation
-from diffrp.scene import Scene, MeshObject
-from diffrp.materials import DefaultMaterial
-from diffrp.utils import gpu_f32, gpu_i32, to_pil
-from diffrp.rendering.camera import PerspectiveCamera
-from diffrp.rendering.surface_deferred import SurfaceDeferredRenderSession
+from diffrp.utils import *
 ```
 
 We now create a icosphere and render the camera space normal map, where RGB color values in $[0, 1]$ map linearly to $[-1, 1]$ in normal XYZ vectors.
@@ -67,13 +64,13 @@ The first run may take some time due to compiling and importing the `nvdiffrast`
 # create the mesh (cpu)
 mesh = trimesh.creation.icosphere(radius=0.8)
 # initialize the DiffRP scene
-scene = Scene()
+scene = diffrp.Scene()
 # register the mesh, load vertices and faces arrays to GPU
-scene.add_mesh_object(MeshObject(DefaultMaterial(), gpu_f32(mesh.vertices), gpu_i32(mesh.faces)))
+scene.add_mesh_object(diffrp.MeshObject(diffrp.DefaultMaterial(), gpu_f32(mesh.vertices), gpu_i32(mesh.faces)))
 # default camera at [0, 0, 3.2] looking backwards
-camera = PerspectiveCamera()
+camera = diffrp.PerspectiveCamera()
 # create the SurfaceDeferredRenderSession, a deferred-rendering rasterization pipeline session
-rp = SurfaceDeferredRenderSession(scene, camera)
+rp = diffrp.SurfaceDeferredRenderSession(scene, camera)
 # convert output tensor to PIL Image and save
 to_pil(rp.false_color_camera_space_normal()).save("procedural-normals.png")
 ```
