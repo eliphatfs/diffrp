@@ -627,9 +627,8 @@ else:
         return torch.cross(a, b, dim=-1)
 
 
-indices = ['xyzw', 'rgba']
-for idx in indices:
-    comb = [''.join(x) for x in itertools.product([''] + list(idx), repeat=len(idx))]
-    comb = [x for x in comb if x]
-    for attr in comb:
-        _make_attr(attr, idx)
+for _idx in ['xyzw', 'rgba']:
+    _comb = [''.join(x) for x in itertools.product([''] + list(_idx), repeat=len(_idx))]
+    _comb = [x for x in _comb if x]
+    for attr in _comb:
+        _make_attr(attr, _idx)
