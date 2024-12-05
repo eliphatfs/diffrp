@@ -736,6 +736,8 @@ class SurfaceDeferredRenderSession(RenderSessionMixin):
                 Colors from transparent objects are alpha-blended if ``opaque_only`` is disabled.
                 Tensor of shape (H, W, 4).
         """
+        if len(self.scene.lights) == 0:
+            raise ValueError("PBR cannot be computed when there is no light in the scene!")
         skybox = 0
         any_skybox = False
         for light in self.scene.lights:
