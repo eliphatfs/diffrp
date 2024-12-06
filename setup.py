@@ -38,5 +38,8 @@ setuptools.setup(
         'nvdiffrast @ git+https://github.com/eliphatfs/nvdiffrast.git',
     ],
     package_data={"diffrp.plugins": ["**/*.c", "**/*.h"], "diffrp": ["resources/**/*.*"]},
+    exclude_package_data={
+        'diffrp': ["*.pyc"],
+    },
     python_requires='~=3.7'
 )
