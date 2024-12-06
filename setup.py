@@ -35,7 +35,7 @@ setuptools.setup(
         'trimesh[easy]',
         'torch_redstone',
         'typing_extensions',
-        'nvdiffrast @ git+https://github.com/eliphatfs/nvdiffrast.git',
+        'diffrp-nvdiffrast',
     ],
     package_data={"diffrp.plugins": ["**/*.c", "**/*.h"], "diffrp": ["resources/**/*.*"]},
     exclude_package_data={
