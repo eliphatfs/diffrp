@@ -4,7 +4,7 @@ import logging
 import trimesh
 from PIL import Image
 from typing import List, Union, BinaryIO
-from trimesh.visual.material import PBRMaterial
+from trimesh.visual.material import PBRMaterial, SimpleMaterial
 from trimesh.visual import ColorVisuals, TextureVisuals
 
 from ..utils import colors
@@ -22,14 +22,27 @@ def ensure_mode(img: Image.Image, mode: str):
 
 
 def force_rgba(color: torch.Tensor):
-    if (color > 2.0).any():
+    if (color > 1.5).any():
         color = color / 255.0
     if color.shape[-1] == 3:
         color = float4(color, 1.0)
     return color
 
 
-def to_gltf_material(verts: torch.Tensor, visual, material_cache: dict = {}):
+def _simple_to_pbr(mat: SimpleMaterial):
+    specular = mat.specular.astype(numpy.float32) / 255.0
+    specular_intensity = specular[0] * 0.2125 + specular[1] * 0.7154 + specular[2] * 0.0721
+    roughness = (2 / (mat.glossiness + 2)) ** (1.0 / 4.0)
+
+    return PBRMaterial(
+        roughnessFactor=roughness,
+        baseColorTexture=mat.image,
+        baseColorFactor=mat.diffuse,
+        metallicFactor=specular_intensity,
+    )
+
+
+def to_gltf_material(verts: torch.Tensor, visual, material_cache: dict = {}, allow_convert=False):
     # GLTF 2.0 specifications 3.9.6 and 5.19
     default_mat = GLTFMaterial(
         gpu_f32([1, 1, 1, 1]),
@@ -52,7 +65,10 @@ def to_gltf_material(verts: torch.Tensor, visual, material_cache: dict = {}):
         if visual.uv is not None:
             uv = gpu_f32(visual.uv)
         mat = visual.material
-        assert isinstance(mat, PBRMaterial), type(mat)
+        if allow_convert and isinstance(mat, SimpleMaterial):
+            mat = _simple_to_pbr(mat)
+        else:
+            assert isinstance(mat, PBRMaterial), type(mat)
         if id(mat) in material_cache:
             return uv, color, material_cache[id(mat)]
         if mat.baseColorFactor is not None:
@@ -95,34 +111,32 @@ def to_gltf_material(verts: torch.Tensor, visual, material_cache: dict = {}):
     return uv, color, default_mat
 
 
-def load_gltf_scene(path: Union[str, BinaryIO], compute_tangents=False) -> Scene:
+def from_trimesh_scene(scene: Union[trimesh.Trimesh, trimesh.Scene], compute_tangents=False, allow_convert=True) -> Scene:
     """
-    Load a glb file as a DiffRP Scene.
+    Convert a trimesh.Trimesh or trimesh.Scene to a DiffRP Scene.
     
     Supported metadata:
         ``name`` for each mesh object (may be ``None``);
         ``camera`` (type PerspectiveCamera) if exists.
     
     Args:
-        path (str | BinaryIO): path to a ``.glb``/``.gltf`` file, or opened ``.glb`` file in binary mode.
+        scene (trimesh.Trimesh | trimesh.Scene): A trimesh loaded scene or mesh.
         compute_tangents (bool):
             If set, tangents will be computed according to the *MikkTSpace* algorithm.
             Execution of the algorithm requires ``gcc`` in the path.
             Defaults to ``False``.
             Note that computing tangents are not thread-safe.
+        allow_convert (bool):
+            DiffRP always try to interpret the materials as PBR materials.
+            If set, allow a default conversion from simple materials (e.g., from obj and ply formats)
+            to PBR materials.
         
     Returns:
         The loaded scene.
     """
+    if isinstance(scene, trimesh.Trimesh):
+        scene = trimesh.Scene(scene)
     drp_scene = Scene()
-    loader = _load_glb
-    if isinstance(path, str):
-        if path.endswith(".gltf"):
-            loader = _load_gltf
-        path = open(path, "rb")
-    kw = loader(path)
-    path.close()
-    scene: trimesh.Scene = trimesh.load(kw, force='scene', process=False)
     if scene.has_camera:
         camera = PerspectiveCamera(
             float(scene.camera.fov[1]),
@@ -145,11 +159,11 @@ def load_gltf_scene(path: Union[str, BinaryIO], compute_tangents=False) -> Scene
             meshes.append(current)
             transforms.append(gpu_f32(transform))
             names.append(geometry_name)
-    logging.info("Loaded scene %s with %d submeshes and %d discarded curve/pcd geometry", path, len(meshes), discarded)
+    logging.info("Loaded scene with %d submeshes and %d discarded curve/pcd geometry", len(meshes), discarded)
     material_cache = {}
     for transform, mesh, name in zip(transforms, meshes, names):
         verts = gpu_f32(mesh.vertices)
-        uv, color, mat = to_gltf_material(verts, mesh.visual, material_cache)
+        uv, color, mat = to_gltf_material(verts, mesh.visual, material_cache, allow_convert)
         # TODO: load vertex tangents if existing
         if 'vertex_normals' in mesh._cache and not compute_tangents:
             drp_scene.add_mesh_object(MeshObject(
@@ -180,3 +194,33 @@ def load_gltf_scene(path: Union[str, BinaryIO], compute_tangents=False) -> Scene
         for mesh_obj in drp_scene.objects:
             mesh_obj.tangents = mikktspace.execute(mesh_obj.verts, mesh_obj.normals, mesh_obj.uv)
     return drp_scene
+
+
+def load_gltf_scene(path: Union[str, BinaryIO], compute_tangents=False) -> Scene:
+    """
+    Load a glb file as a DiffRP Scene.
+    
+    Supported metadata:
+        ``name`` for each mesh object (may be ``None``);
+        ``camera`` (type PerspectiveCamera) if exists.
+    
+    Args:
+        path (str | BinaryIO): path to a ``.glb``/``.gltf`` file, or opened ``.glb`` file in binary mode.
+        compute_tangents (bool):
+            If set, tangents will be computed according to the *MikkTSpace* algorithm.
+            Execution of the algorithm requires ``gcc`` in the path.
+            Defaults to ``False``.
+            Note that computing tangents are not thread-safe.
+        
+    Returns:
+        The loaded scene.
+    """
+    loader = _load_glb
+    if isinstance(path, str):
+        if path.endswith(".gltf"):
+            loader = _load_gltf
+        path = open(path, "rb")
+    kw = loader(path)
+    path.close()
+    scene: trimesh.Scene = trimesh.load(kw, force='scene', process=False)
+    return from_trimesh_scene(scene, compute_tangents, False)

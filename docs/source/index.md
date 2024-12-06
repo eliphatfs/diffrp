@@ -23,6 +23,12 @@ The glTF [ABeautifulGame](https://github.com/KhronosGroup/glTF-Sample-Assets/tre
 The package can be installed by:
 
 ```bash
+pip install diffrp
+```
+
+Or for latest development:
+
+```bash
 pip install git+https://github.com/eliphatfs/diffrp
 ```
 
@@ -121,6 +127,7 @@ generated/diffrp
 
 ## Update Notes
 
++ **0.2.4**: Loading from trimesh scene/mesh. Support more than 16M triangles and higher than 2K resolution with corresponding upstream nvdiffrast. More complete test suite.
 + **0.2.3**: Make submodule contents available at top level. Make context sharing mechanism thread-safe by default. Fix `torch.load` warnings in newer torch versions.
 + **0.2.2**: Fixed backward compatibility due to `staticmethod`.
 + **0.2.1**: Add metadata functionality.

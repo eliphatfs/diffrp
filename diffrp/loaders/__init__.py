@@ -1,1 +1,1 @@
-from .gltf_loader import load_gltf_scene
+from .gltf_loader import load_gltf_scene, from_trimesh_scene
