@@ -16,7 +16,7 @@ from ..scene import Scene, ImageEnvironmentLight
 from ..utils.composite import alpha_blend, alpha_additive
 from ..utils.coordinates import unit_direction_to_latlong_uv
 from ..materials.base_material import SurfaceInput, SurfaceUniform, SurfaceOutputStandard
-from .interpolator import FullScreenInterpolator, MaskedSparseInterpolator, polyfill_interpolate
+from .interpolator import FullScreenInterpolator, MaskedSparseInterpolator, polyfill_interpolate, float_to_triidx
 from ..utils.light_transport import prefilter_env_map, pre_integral_env_brdf, irradiance_integral_env_map, fresnel_schlick_smoothness
 
 
@@ -280,7 +280,7 @@ class SurfaceDeferredRenderSession(RenderSessionMixin):
         for rast in r_layers:
             mats = []
             if self.options.interpolator_impl == 'stencil_masked':
-                vi_idx = rast[..., -1].long()
+                vi_idx = float_to_triidx(rast[..., -1])
                 stencil_buf = vao.stencils[vi_idx]
             for pi, x in enumerate(self.scene.objects):
                 su = SurfaceUniform(x.M, cam_v, cam_p)
@@ -342,7 +342,7 @@ class SurfaceDeferredRenderSession(RenderSessionMixin):
                     stencil_lookup.append(len(buffer))
                     buffer.append(op)
             stencil_lookup = vao.stencils.new_tensor(stencil_lookup)
-            gbuffers.append(torch.gather(torch.cat(buffer), 0, stencil_lookup[vao.stencils][rast.a.long()].repeat_interleave(len(default), dim=-1).long()))
+            gbuffers.append(torch.gather(torch.cat(buffer), 0, stencil_lookup[vao.stencils][float_to_triidx(rast.a)].repeat_interleave(len(default), dim=-1).long()))
         return gbuffers
 
     def compose_layers(
@@ -796,7 +796,7 @@ class SurfaceDeferredRenderSession(RenderSessionMixin):
         clip_space = self.clip_space()
         tris = self.vertex_array_object().tris
 
-        frag = polyfill_interpolate(clip_space, rast, tris[rast.w.squeeze(-1).long() - 1], 1.0)
+        frag = polyfill_interpolate(clip_space, rast, tris[float_to_triidx(rast.w.squeeze(-1)) - 1], 1.0)
         frag_xy = frag.xy / frag.w
 
         flat_tris_xy = (clip_space.xy / clip_space.w)[tris]  # F, 3, 2

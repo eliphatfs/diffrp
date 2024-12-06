@@ -14,7 +14,7 @@ from .mixin import RenderSessionMixin
 from ..utils.geometry import barycentric
 from ..scene import Scene, ImageEnvironmentLight
 from ..utils.raycaster import NaivePBBVH, BruteForceRaycaster, TorchOptiX
-from .interpolator import MaskedSparseInterpolator, FullScreenInterpolator
+from .interpolator import MaskedSparseInterpolator, triidx_to_float, float_to_triidx
 from ..utils.coordinates import near_plane_ndc_grid, unit_direction_to_latlong_uv
 from ..materials.base_material import SurfaceInput, SurfaceUniform, SurfaceOutputStandard
 from ..utils.light_transport import hammersley, importance_sample_ggx, combine_fixed_tangent_space, geometry_smith, fresnel_schlick_smoothness
@@ -160,13 +160,13 @@ class PathTracingSession(RenderSessionMixin):
         cam_p = self.camera_P()
         far = self.camera_far()
         vao = self.vertex_array_object()
-        i = torch.where(t < far, i.float() + 1, 0)
+        i = torch.where(t < far, i + 1, 0)
         vi_data = float4(
-            barycentric(*torch.unbind(vao.world_pos[vao.tris[(i - 1).long()]], dim=-2), rays_o + rays_d * t[..., None]).xy,
-            t[..., None], i[..., None]
+            barycentric(*torch.unbind(vao.world_pos[vao.tris[i - 1]], dim=-2), rays_o + rays_d * t[..., None]).xy,
+            t[..., None], triidx_to_float(i[..., None])
         ).view(-1, 4)
         mats = []
-        stencil_buf = vao.stencils[i.long()]
+        stencil_buf = vao.stencils[i]
         for pi, x in enumerate(self.scene.objects):
             su = SurfaceUniform(x.M, cam_v, cam_p)
             si = SurfaceInput(su, vao, MaskedSparseInterpolator(vi_data, vao.tris, stencil_buf == pi + 1))

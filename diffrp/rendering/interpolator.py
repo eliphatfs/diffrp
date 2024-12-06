@@ -13,6 +13,22 @@ import nvdiffrast.torch as dr
 from ..utils import fma
 
 
+def __float_as_int(x: torch.Tensor):
+    return x.view(torch.int32)
+
+
+def __int_as_float(x: torch.Tensor):
+    return x.view(torch.float32)
+
+
+def float_to_triidx(x: torch.Tensor):
+    return torch.where(x <= 16777216, x.int(), __float_as_int(x) - 0x4a800000)
+
+
+def triidx_to_float(x: torch.Tensor):
+    return torch.where(x <= 0x01000000, x.float(), __int_as_float(0x4a800000 + x))
+
+
 @torch.jit.script
 def _interpolate_impl(
     vertex_buffer: torch.Tensor,
@@ -74,7 +90,7 @@ class MaskedSparseInterpolator(Interpolator):
         self.tris = tris
         self.indices = mask.nonzero(as_tuple=True)
         self.vi_data = vi_data[self.indices]  # (u, v, z|depth, tridx)
-        self.tri_idx = tris[(self.vi_data[..., -1] - 1).long()].long()
+        self.tri_idx = tris[float_to_triidx(self.vi_data[..., -1]) - 1].long()
 
     def interpolate(self, vertex_buffer: torch.Tensor):
         # n, d; f, 3; ?, 4
