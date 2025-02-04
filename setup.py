@@ -28,6 +28,7 @@ setuptools.setup(
         "Operating System :: OS Independent",
     ],
     install_requires=[
+        'rich',
         'numpy',
         'torch',
         'pyexr',
@@ -41,5 +42,10 @@ setuptools.setup(
     exclude_package_data={
         'diffrp': ["*.pyc"],
     },
+    entry_points=dict(
+        console_scripts=[
+            "diffrp=diffrp.scripts.main:main"
+        ]
+    ),
     python_requires='~=3.7'
 )

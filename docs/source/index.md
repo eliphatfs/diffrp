@@ -127,6 +127,8 @@ generated/diffrp
 
 ## Update Notes
 
++ **0.2.6**: Added `quick-render` script for previewing objects.
++ **0.2.5**: `pip` packaging.
 + **0.2.4**: Loading from trimesh scene/mesh. Support more than 16M triangles and higher than 2K resolution with corresponding upstream nvdiffrast. More complete test suite.
 + **0.2.3**: Make submodule contents available at top level. Make context sharing mechanism thread-safe by default. Fix `torch.load` warnings in newer torch versions.
 + **0.2.2**: Fixed backward compatibility due to `staticmethod`.
