@@ -127,6 +127,7 @@ generated/diffrp
 
 ## Update Notes
 
++ **0.2.7**: Fix depth transform bug in surface deferred rendering pipeline.
 + **0.2.6**: Added `quick-render` script for previewing objects.
 + **0.2.5**: `pip` packaging.
 + **0.2.4**: Loading from trimesh scene/mesh. Support more than 16M triangles and higher than 2K resolution with corresponding upstream nvdiffrast. More complete test suite.
