@@ -429,7 +429,7 @@ class SurfaceDeferredRenderSession(RenderSessionMixin):
 
     @cached
     def depth_layered(self) -> List[torch.Tensor]:
-        return self.gbuffer_collect(lambda x, y: -transform_vector3x3(x.world_pos, self.camera.V()).z, [0.])
+        return self.gbuffer_collect(lambda x, y: -transform_point4x3(x.world_pos, self.camera.V()).z, [0.])
 
     @cached
     def distance_layered(self) -> List[torch.Tensor]:
